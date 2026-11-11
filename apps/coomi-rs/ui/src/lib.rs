@@ -36,6 +36,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[cfg(target_os = "ios")]
+pub mod ios_ffi;
 mod collab;
 mod goal_tracker;
 mod group;

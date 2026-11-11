@@ -9,6 +9,10 @@ default-run = "coomi"
 name = "coomi_ui"
 path = "src/lib.rs"
 
+# staticlib：iOS 侧由 Swift 直接链接（引擎跑在 App 进程内，不经 iSH）；
+# rlib：同 crate 的 [[bin]] 与集成测试需要它。
+crate-type = ["staticlib", "rlib"]
+
 [[bin]]
 name = "coomi"
 path = "src/main.rs"

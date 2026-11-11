@@ -40,7 +40,9 @@ unicode-width = "0.2"
 uuid = { version = "1", features = ["serde", "v4"] }
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# deny 而非 forbid：forbid 连「模块级 allow」都不允许（E0453），
+# 而 iOS 的 C ABI 出口必须写 unsafe。业务代码仍由 deny 严格约束。
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 dbg_macro = "deny"

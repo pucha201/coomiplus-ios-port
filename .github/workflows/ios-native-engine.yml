@@ -1,0 +1,61 @@
+# iOS 原生引擎构建（验证 aarch64-apple-ios 能否编过）
+#
+# 目的：引擎**原生**编译成静态库，跟随 App 启动 —— 不经 iSH 模拟。
+# iSH 只作为「工作环境」（proth 的替代），提供 shell/git/python。
+#
+# 这个 workflow 单独存在，是为了把「Rust 能否编到 iOS」这件事
+# 与其它构建分离，失败时归因最清晰（不需要在一堆 job 里找）。
+name: ios-native-engine
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'apps/coomi-rs/**'
+      - '.github/workflows/ios-native-engine.yml'
+
+jobs:
+  build:
+    name: cargo build --target aarch64-apple-ios
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust + iOS target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-ios
+          rustc --version
+          xcodebuild -version
+          # clang 由 Xcode 提供，ring 的 C 代码需要它。
+          clang --version | head -3
+
+      - name: 构建静态库（不给 iroh：它需要额外的 QUIC 依赖，先验证主干）
+        run: |
+          set -o pipefail
+          cargo build --release \
+            -p coomi-ui \
+            --target aarch64-apple-ios \
+            --manifest-path apps/coomi-rs/Cargo.toml \
+            2>&1 | tail -60
+
+      - name: 自检产物
+        run: |
+          LIB=apps/coomi-rs/target/aarch64-apple-ios/release/libcoomi_ui.a
+          ls -la "$LIB"
+          file "$LIB"
+          # 必须是 arm64 静态库
+          file "$LIB" | grep -qi "arm64\|aarch64" || { echo "::error::不是 arm64 产物"; exit 1; }
+          # C ABI 符号必须在（Swift 靠它们启动引擎）
+          nm -gU "$LIB" 2>/dev/null | grep -E "_coomi_(start|port|version)" || {
+            echo "::warning::未找到 coomi_* 符号，检查 #[unsafe(no_mangle)]"
+          }
+          echo "✅ 静态库自检通过"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libcoomi_ui-ios
+          path: apps/coomi-rs/target/aarch64-apple-ios/release/libcoomi_ui.a
+          if-no-files-found: error
