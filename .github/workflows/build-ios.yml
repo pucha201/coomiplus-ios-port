@@ -155,7 +155,11 @@ jobs:
         # 不要用 `xcodebuild | tail`：管道退出码取的是 tail，
         # xcodebuild 失败会被吞成成功，后面打包步骤再报一个无关的错。
         # 这里先落日志、单独判退出码，失败时打末尾 120 行进日志。
+        # GitHub Actions 用 `bash -e` 跑 run:，命令失败会立即退出，
+        # 导致 `status=$?` 和 `tail` 都不执行 —— 日志里只剩 exit code。
+        # 必须显式关掉 errexit，自己接管退出码，才能看到真正的编译错误。
         run: |
+          set +e
           set -o pipefail
           cd apps/ios
           xcodebuild -project CoomiIOS.xcodeproj -scheme CoomiIOS \
@@ -163,11 +167,26 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
             build > xcodebuild.log 2>&1
           status=$?
-          tail -120 xcodebuild.log
+          echo "=== xcodebuild exit: $status ==="
+          # 优先打印 error 行；没有就打印末尾，避免刷屏。
+          if grep -q "error:" xcodebuild.log; then
+            echo "=== 编译错误 ==="
+            grep -n "error:" xcodebuild.log | head -40
+          fi
+          echo "=== 末尾 80 行 ==="
+          tail -80 xcodebuild.log
           if [ $status -ne 0 ]; then
             echo "::error::xcodebuild 失败（exit $status）"
             exit $status
           fi
+
+      - name: 上传编译日志（即使失败也留证据）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: apps/ios/xcodebuild.log
+          if-no-files-found: warn
 
       - name: 打包 ipa
         run: |
