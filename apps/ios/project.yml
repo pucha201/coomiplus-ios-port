@@ -39,10 +39,9 @@ targets:
       - path: CoomiApp/Resources
         buildPhase: resources
         optional: true
-      # 引擎二进制没有扩展名，单独声明一次更保险。
-      - path: CoomiApp/Resources/coomi
-        buildPhase: resources
-        optional: true
+      # 注意：**不再**把 i686 的 `coomi` 打进 App。
+      # 引擎现在编译为原生 aarch64 静态库（libcoomi_ui.a），直接链接进主二进制。
+      # 早期版本把 i686 ELF 塞进 bundle 由 iSH 模拟执行 —— 多 22MB、性能只剩 10-20%。
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.coomi.ios
@@ -56,9 +55,17 @@ targets:
         HEADER_SEARCH_PATHS:
           - "$(inherited)"
           - "$(SRCROOT)/ThirdParty/ish"
-        # 集成 iSH 静态库后把下面两行取消注释：
-        # OTHER_LDFLAGS: ["$(inherited)", "-lish"]
-        # LIBRARY_SEARCH_PATHS: ["$(inherited)", "$(SRCROOT)/ThirdParty/ish/build"]
+        # 原生 Rust 引擎（CI 里由 cargo build --target aarch64-apple-ios 产出）。
+        # 链接后 Swift 可直接调 coomi_start / coomi_port / coomi_version。
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-lcoomi_ui"
+        LIBRARY_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/ThirdParty/engine"
+        # iSH 静态库（工作环境用，可选）：集成后取消注释。
+        # - "-lish"
+        # - "$(SRCROOT)/ThirdParty/ish/build"
     info:
       path: CoomiApp/Info.plist
       properties:

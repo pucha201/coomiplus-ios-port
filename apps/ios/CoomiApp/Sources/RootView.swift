@@ -34,10 +34,10 @@ struct RootView: View {
             switch engine.state {
             case .idle:
                 // 先做就绪诊断：缺东西就直接进引导页，不盲目启动。
-                if let readiness, !readiness.isReady {
+                if let readiness, !readiness.canStart {
                     OnboardingView(report: readiness) {
                         self.readiness = ReadinessChecker.check()
-                        if self.readiness?.isReady == true {
+                        if self.readiness?.canStart == true {
                             engine.ensureRunning()
                         }
                     }
@@ -78,10 +78,10 @@ struct RootView: View {
 
             case let .failed(message):
                 // 失败时重跑诊断：如果确实是缺产物，直接给出可执行指引。
-                if let readiness, !readiness.isReady {
+                if let readiness, !readiness.canStart {
                     OnboardingView(report: readiness) {
                         self.readiness = ReadinessChecker.check()
-                        if self.readiness?.isReady == true {
+                        if self.readiness?.canStart == true {
                             engine.ensureRunning()
                         }
                     }
@@ -99,7 +99,7 @@ struct RootView: View {
             // 先诊断再启动：缺产物时不要让启动流程白跑一遍、
             // 也不要让用户看到一句没法行动的失败提示。
             readiness = ReadinessChecker.check()
-            if readiness?.isReady == true, case .idle = engine.state {
+            if readiness?.canStart == true, case .idle = engine.state {
                 engine.ensureRunning()
             }
         }
@@ -162,13 +162,16 @@ struct OnboardingView: View {
         let isExpanded = expanded.contains(item.id)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: item.isReady ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                    .foregroundStyle(item.isReady ? .green : .orange)
+                Image(systemName: item.isReady
+                      ? "checkmark.circle.fill"
+                      : (item.isBlocking ? "exclamationmark.circle.fill" : "minus.circle"))
+                    .foregroundStyle(item.isReady ? .green : (item.isBlocking ? .orange : .secondary))
                 Text(item.title).font(.subheadline.weight(.medium))
                 Spacer()
-                Text(item.isReady ? "就绪" : "缺失")
+                // 非阻塞项缺了只是少一类能力，不该显示成"缺失"吓人。
+                Text(item.isReady ? "就绪" : (item.isBlocking ? "缺失" : "可选·缺失"))
                     .font(.caption.weight(.medium))
-                    .foregroundStyle(item.isReady ? .green : .orange)
+                    .foregroundStyle(item.isReady ? .green : (item.isBlocking ? .orange : .secondary))
             }
             Text(item.detail).font(.caption).foregroundStyle(.secondary)
 
@@ -204,12 +207,28 @@ struct OnboardingView: View {
 
     private var footer: some View {
         VStack(spacing: 10) {
-            Button(action: onRecheck) {
-                Text("重新检查").frame(maxWidth: .infinity)
+            // 只有可选项缺失时，允许直接启动 ——
+            // 引擎不依赖工作环境，把用户关在这里毫无意义。
+            if report.canStart {
+                Button(action: onRecheck) {
+                    Text("仍然启动（无 shell 工具）").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
             }
-            .buttonStyle(.borderedProminent)
 
-            Text("提示：补齐产物后需要重新安装 App（资源在打包时写入）。")
+            // SwiftUI 的 buttonStyle 是泛型，两个分支类型不同，不能写三元；用 if 分。
+            if report.canStart {
+                Button(action: onRecheck) {
+                    Text("重新检查").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            } else {
+                Button(action: onRecheck) {
+                    Text("重新检查").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            Text("提示：补齐产物后需重新安装 App（资源在打包时写入）。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

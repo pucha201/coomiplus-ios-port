@@ -29,47 +29,49 @@ env:
 jobs:
   # ───────────────── 1. 引擎二进制（i686 Linux，ubuntu） ─────────────────
   engine:
-    name: engine (i686-musl)
-    runs-on: ubuntu-24.04
+    name: engine (aarch64-apple-ios)
+    # 引擎**原生**编译：与安卓同构 ——
+    #   安卓 = 原生引擎(JNI) + proot 工作环境
+    #   iOS  = 原生引擎(staticlib) + iSH 工作环境
+    # 所以这里产出的是 iOS 静态库，不再是跑在 iSH 里的 i686 ELF。
+    runs-on: macos-15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 Rust + i686 musl 目标
+      - name: 安装 Rust + iOS target
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-          rustup target add i686-unknown-linux-musl
+          rustup target add aarch64-apple-ios
+          rustc --version
+          # ring 的 C 代码要 clang，macOS runner 自带。
+          clang --version | head -3
 
-      - name: 安装 musl 交叉工具链
-        # ring（TLS）的 build.rs 会调 musl-gcc；musl-tools 只给 x86_64，
-        # i686 需要 gcc -m32，所以套一层包装脚本。
+      - name: 构建静态库
         run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools gcc-multilib g++-multilib
-          mkdir -p "$HOME/.local/bin"
-          printf '#!/bin/sh\nexec gcc -m32 "$@"\n' > "$HOME/.local/bin/i686-musl-gcc"
-          chmod +x "$HOME/.local/bin/i686-musl-gcc"
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          echo "CC_i686_unknown_linux_musl=i686-musl-gcc" >> $GITHUB_ENV
-          echo "CARGO_TARGET_I686_UNKNOWN_LINUX_MUSL_LINKER=i686-musl-gcc" >> $GITHUB_ENV
-
-      - name: 构建引擎（--no-default-features：不编 iroh/ring 的 QUIC）
-        run: |
-          cargo build --release --no-default-features \
-            -p coomi-ui --bin coomi \
-            --target i686-unknown-linux-musl \
-            --manifest-path apps/coomi-rs/Cargo.toml
+          set -o pipefail
+          cargo build --release \
+            -p coomi-ui \
+            --target aarch64-apple-ios \
+            --manifest-path apps/coomi-rs/Cargo.toml \
+            2>&1 | tail -40
 
       - name: 自检
         run: |
-          BIN=apps/coomi-rs/target/i686-unknown-linux-musl/release/coomi
-          file "$BIN"
-          file "$BIN" | grep -q "ELF 32-bit" || { echo "不是 32 位 ELF"; exit 1; }
+          LIB=apps/coomi-rs/target/aarch64-apple-ios/release/libcoomi_ui.a
+          ls -la "$LIB"
+          file "$LIB"
+          file "$LIB" | grep -qi "arm64\|aarch64" || { echo "::error::不是 arm64 产物"; exit 1; }
+          nm -gU "$LIB" 2>/dev/null | grep -E "_coomi_(start|port|version)" \
+            || { echo "::error::缺少 coomi_* 符号"; exit 1; }
+          echo "✅ 静态库自检通过"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: coomi-i686
-          path: apps/coomi-rs/target/i686-unknown-linux-musl/release/coomi
+          name: libcoomi_ui-ios
+          path: apps/coomi-rs/target/aarch64-apple-ios/release/libcoomi_ui.a
+          if-no-files-found: error
 
   # ───────────────── 2. iSH 静态库（macOS） ─────────────────
   ish:
@@ -155,6 +157,27 @@ jobs:
           mkdir -p ../ios/CoomiApp/Resources/web
           cp -R dist/. ../ios/CoomiApp/Resources/web/
           echo "前端文件数: $(find ../ios/CoomiApp/Resources/web -type f | wc -l)"
+
+      - name: 下载原生引擎静态库
+        # 引擎在独立 job（macos-15）上编译，产物要显式下载过来 ——
+        # 两个 job 在不同 runner 上，本地 target 目录不存在。
+        uses: actions/download-artifact@v4
+        with:
+          name: libcoomi_ui-ios
+          path: apps/ios/ThirdParty/engine
+
+      - name: 校验静态库
+        run: |
+          LIB=apps/ios/ThirdParty/engine/libcoomi_ui.a
+          if [ ! -f "$LIB" ]; then
+            echo "::error::找不到 libcoomi_ui.a"
+            find apps/ios/ThirdParty -type f 2>/dev/null | head -20
+            exit 1
+          fi
+          ls -la "$LIB"
+          file "$LIB"
+          nm -gU "$LIB" 2>/dev/null | grep -E "_coomi_(start|port|version)" \
+            || { echo "::error::静态库缺少 coomi_* 符号"; exit 1; }
 
       - name: 安装 XcodeGen
         run: brew install xcodegen
