@@ -355,22 +355,13 @@ impl SkillSelector {
                 (term, value)
             })
             .collect::<HashMap<_, _>>();
-        // 每个文档的 norm 也按词排序后累加。
-        // 
-        // 与 query_norm 同一个理由：`tokens` 是 HashMap，遍历顺序不稳定，
-        // f64 加法不满足结合律 → norm 末位抖动 → 分数抖动 → 技能排序变化。
-        // 这是"同一提问选出不同技能"的第三个来源（前两个是 query_norm 与
-        // select 里的累加），三个都必须排序，缺一个测试就会在 Linux 上偶发失败。
         let norms = doc_tokens
             .iter()
             .map(|tokens| {
-                let mut terms: Vec<(&String, &u32)> = tokens.iter().collect();
-                terms.sort_by(|l, r| l.0.cmp(r.0));
-                let sum = terms
+                let sum = tokens
                     .iter()
                     .map(|(term, count)| {
-                        let weight =
-                            f64::from(**count) * idf.get(*term).copied().unwrap_or(1.0);
+                        let weight = f64::from(*count) * idf.get(term).copied().unwrap_or(1.0);
                         weight * weight
                     })
                     .sum::<f64>();
