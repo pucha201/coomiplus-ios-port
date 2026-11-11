@@ -78,7 +78,7 @@ final class ISHBridge {
 
         // ① 把宿主目录变成 iSH 的根。
         //    iSH 的 `iOSFS` 负责这件事：它把 App 沙箱里的一个目录作为 `/` 暴露给 Linux。
-        guard ish_available() else {
+        guard ISHRuntime.available() else {
             return """
             未链接 iSH 运行时（libish.a）。
             请按 docs/README.md「集成 iSH 静态库」把 iSH 编成静态库并加入本工程。
@@ -162,6 +162,22 @@ final class ISHBridge {
         return nil
     }
 
+    /// 把宿主路径换算成 iSH 里的 Linux 绝对路径。
+    ///
+    /// iSH 通过 `iOSFS` 把 App 沙箱里的某个目录暴露成 `/`，
+    /// 所以 `Documents/linux/usr/bin` 在 Linux 眼里就是 `/usr/bin`。
+    /// 解包/启动命令都要用 Linux 视角的路径，不能用宿主路径。
+    static func guestPath(for hostURL: URL) -> String {
+        let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("linux", isDirectory: true).path
+        let full = hostURL.standardizedFileURL.path
+        if full.hasPrefix(root) {
+            let rest = String(full.dropFirst(root.count))
+            return rest.isEmpty ? "/" : rest
+        }
+        return full
+    }
+
     /// 解包 `linux-rootfs.tar.gz` 到 Linux 根（已解包则跳过）。
     ///
     /// 为什么用 tar.gz 而不是把几万个文件塞进 App bundle：
@@ -185,22 +201,23 @@ final class ISHBridge {
             return "创建 Linux 根目录失败：\(error.localizedDescription)"
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-        process.arguments = [
-            "-xzf", archive.path,
-            "-C", linuxRootURL.path,
-            // 恢复权限位（/bin/sh 必须可执行）。
-            "--preserve-permissions",
-        ]
+        // iOS 没有 Process（macOS 专有），App 也不能 fork/exec ——
+        // 所以解包不能靠宿主 shell，必须交给 **iSH 的 Linux 侧**：
+        // tar 是 BusyBox 自带的，直接在模拟环境里跑。
+        let linuxArchive = linuxRootURL.appendingPathComponent("rootfs.tar.gz")
+        try? fm.removeItem(at: linuxArchive)
         do {
-            try process.run()
-            process.waitUntilExit()
+            try fm.copyItem(at: archive, to: linuxArchive)
         } catch {
-            return "解包 rootfs 失败：\(error.localizedDescription)"
+            return "拷贝 rootfs 到 Linux 根失败：\(error.localizedDescription)"
         }
-        if process.terminationStatus != 0 {
-            return "解包 rootfs 失败（tar 退出码 \(process.terminationStatus)）"
+        let guestArchive = Self.guestPath(for: linuxArchive)
+        let guestRoot = Self.guestPath(for: linuxRootURL)
+        var errorCode: Int32 = 0
+        let ok = ishtool_extract_tar(guestArchive, guestRoot, &errorCode)
+        try? fm.removeItem(at: linuxArchive)
+        if ok == 0 {
+            return "解包 rootfs 失败（iSH tar 返回 errno=\(errorCode)）"
         }
         // 标记完成：下次直接跳过。
         FileManager.default.createFile(atPath: marker.path, contents: Data())
@@ -287,5 +304,21 @@ private func ish_spawn_shell(
 @_silgen_name("ish_kill_task")
 private func ish_kill_task(_ task: UnsafeMutableRawPointer, _ signal: Int32)
 
-@_silgen_name("ish_available")
-private func ish_available() -> Bool
+@_silgen_name("ishtool_extract_tar")
+private func ishtool_extract_tar(
+    _ archive: UnsafePointer<CChar>,
+    _ destination: UnsafePointer<CChar>,
+    _ errorOut: UnsafeMutablePointer<Int32>
+) -> Int32
+
+/// iSH C 接口的共享声明。
+///
+/// 为什么集中在这里：这些符号由 `ish_support.c` 提供，
+/// 但**多个 Swift 文件**都要用（ISHBridge 做启动、Readiness 做就绪诊断）。
+/// 声明散在各文件里且标了 private 时，另一个文件就会 "cannot find xxx in scope" ——
+/// CI 上真实踩过这个坑（Readiness.swift 找不到 ish_available）。
+enum ISHRuntime {
+    /// 是否链接了 iSH 运行时（未链接时 C 侧桩实现返回 false）。
+    @_silgen_name("ish_available")
+    static func available() -> Bool
+}

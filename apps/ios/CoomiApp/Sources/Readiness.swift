@@ -45,7 +45,7 @@ enum ReadinessChecker {
 
         // ① iSH 运行时：由 C 桥接层告诉我们有没有链接进来。
         //    `ish_available()` 在未链接 libish 时返回 false（桩实现）。
-        let ishReady = ish_available()
+        let ishReady = ISHRuntime.available()
         items.append(.init(
             id: "ish",
             title: "iSH 运行时",

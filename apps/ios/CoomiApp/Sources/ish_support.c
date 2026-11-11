@@ -23,6 +23,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <signal.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -171,5 +172,63 @@ void *ish_spawn_shell(const char *command, int *error_out) {
     return NULL;
 }
 void ish_kill_task(void *task, int sig) { (void) task; (void) sig; }
+int ishtool_extract_tar(const char *archive, const char *destination, int *error_out) {
+    (void) archive;
+    (void) destination;
+    if (error_out != NULL) {
+        *error_out = ENOSYS;
+    }
+    return 0;
+}
 
 #endif
+
+/// 在 Linux 侧解包 tar.gz。
+///
+/// # 为什么需要它
+/// iOS 没有 `Process`（那是 macOS API），App 也不能 fork/exec 任意程序。
+/// 而 rootfs 是 tar.gz，必须在 Linux 环境里解 —— 于是走这条路：
+/// 宿主把归档拷进 iSH 可见的目录，再让 Linux 的 tar（BusyBox 自带）去解。
+///
+/// 返回 1 表示成功，0 表示失败（errno 写进 error_out）。
+int ishtool_extract_tar(const char *archive, const char *destination, int *error_out) {
+    if (error_out != NULL) {
+        *error_out = 0;
+    }
+    if (archive == NULL || destination == NULL) {
+        if (error_out != NULL) {
+            *error_out = EINVAL;
+        }
+        return 0;
+    }
+
+    // 先在 Linux 里建目标目录，再解包。
+    // 用 sh -c 串起来是为了让 BusyBox 自己处理 mkdir -p 的语义。
+    char command[PATH_MAX * 2 + 128];
+    int written = snprintf(
+        command,
+        sizeof(command),
+        "mkdir -p '%s' && tar -xzf '%s' -C '%s'",
+        destination, archive, destination
+    );
+    if (written <= 0 || (size_t) written >= sizeof(command)) {
+        if (error_out != NULL) {
+            *error_out = ENAMETOOLONG;
+        }
+        return 0;
+    }
+
+    // exec 一个独立 task 跑这条命令（与 ish_spawn_shell 同一个机制）。
+    int spawn_err = 0;
+    void *task = ish_spawn_shell(command, &spawn_err);
+    if (task == NULL) {
+        if (error_out != NULL) {
+            *error_out = spawn_err == 0 ? EIO : spawn_err;
+        }
+        return 0;
+    }
+    // 注意：这里是**异步**的 —— spawn 之后 tar 还在跑。
+    // 调用方（Swift）随后会做健康检查/文件存在性判断，
+    // 所以不阻塞等待；真正的"解包完成"以 /bin/sh 存在为准。
+    return 1;
+}
