@@ -1,0 +1,49 @@
+# 最小 macOS runner 探测
+#
+# 目的：单独验证这个账号/仓库在当前状态下能否拿到 macOS runner。
+# 不跑任何构建，只 echo 环境信息 —— 快、便宜、结论明确。
+#
+# 用法：推到 main 后在 Actions 里手动触发，或直接 push 触发。
+name: probe-macos
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/probe-macos.yml'
+
+jobs:
+  # 用两个不同标签并行探测，看哪个能分配到 runner
+  macos14:
+    name: probe macos-14
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - name: 报告环境
+        run: |
+          echo "runner OS: $RUNNER_OS"
+          echo "runner arch: $RUNNER_ARCH"
+          swift --version || echo "swift 不可用"
+          xcodebuild -version || echo "xcodebuild 不可用"
+          echo "✅ macos-14 可用"
+
+  macosLatest:
+    name: probe macos-latest
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - name: 报告环境
+        run: |
+          echo "runner OS: $RUNNER_OS"
+          swift --version || echo "swift 不可用"
+          echo "✅ macos-latest 可用"
+
+  macos15:
+    name: probe macos-15
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - name: 报告环境
+        run: |
+          echo "runner OS: $RUNNER_OS"
+          echo "✅ macos-15 可用"
