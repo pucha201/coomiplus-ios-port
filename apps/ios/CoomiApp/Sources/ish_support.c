@@ -155,23 +155,9 @@ void ish_kill_task(void *task_ptr, int signal_number) {
     send_signal(task, signal_number, SIGINFO_NIL);
 }
 
-#else  // !COOMI_HAS_ISH
 
-// 未链接 iSH 时的桩：工程照样能编、能跑 UI，只是引擎起不来
-//（界面会给出「未链接 iSH 运行时」的明确提示，而不是崩溃）。
-
-int ish_available(void) { return 0; }
-int ish_set_root(const char *path) { (void) path; return ENOSYS; }
-int ish_boot(void) { return ENOSYS; }
-int ish_mount_pseudo_filesystems(void) { return ENOSYS; }
-void *ish_spawn_shell(const char *command, int *error_out) {
-    (void) command;
-    if (error_out != NULL) {
-        *error_out = ENOSYS;
-    }
-    return NULL;
-}
-void ish_kill_task(void *task, int sig) { (void) task; (void) sig; }
+/// 在 Linux 侧解包 tar.gz（iOS 无 Process，必须借 iSH 的 tar）。
+/// 返回 0 表示成功；非 0 为 errno。
 int ishtool_extract_tar(const char *archive, const char *destination) {
     if (archive == NULL || destination == NULL) {
         return EINVAL;
@@ -197,18 +183,27 @@ int ishtool_extract_tar(const char *archive, const char *destination) {
     return 0;
 }
 
-#endif
+#else  // !COOMI_HAS_ISH
 
-/// 在 Linux 侧解包 tar.gz。
-///
-/// # 为什么需要它
-/// iOS 没有 `Process`（那是 macOS API），App 也不能 fork/exec 任意程序。
-/// 而 rootfs 是 tar.gz，必须在 Linux 环境里解 —— 于是走这条路：
-/// 宿主把归档拷进 iSH 可见的目录，再让 Linux 的 tar（BusyBox 自带）去解。
-///
-/// 返回 1 表示成功，0 表示失败（errno 写进 error_out）。
+// 未链接 iSH 时的桩：工程照样能编、能跑 UI，只是引擎起不来
+//（界面会给出「未链接 iSH 运行时」的明确提示，而不是崩溃）。
+
+int ish_available(void) { return 0; }
+int ish_set_root(const char *path) { (void) path; return ENOSYS; }
+int ish_boot(void) { return ENOSYS; }
+int ish_mount_pseudo_filesystems(void) { return ENOSYS; }
+void *ish_spawn_shell(const char *command, int *error_out) {
+    (void) command;
+    if (error_out != NULL) {
+        *error_out = ENOSYS;
+    }
+    return NULL;
+}
+void ish_kill_task(void *task, int sig) { (void) task; (void) sig; }
+
 int ishtool_extract_tar(const char *archive, const char *destination) {
     (void) archive;
     (void) destination;
     return ENOSYS;
 }
+#endif
