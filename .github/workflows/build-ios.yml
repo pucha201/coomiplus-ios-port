@@ -63,8 +63,11 @@ jobs:
           ls -la "$LIB"
           file "$LIB"
           file "$LIB" | grep -qi "arm64\|aarch64" || { echo "::error::不是 arm64 产物"; exit 1; }
-          nm -gU "$LIB" 2>/dev/null | grep -E "_coomi_(start|port|version)" \
-            || { echo "::error::缺少 coomi_* 符号"; exit 1; }
+          # -U 是"只显示未定义符号"，静态库里 coomi_* 是**已定义**的，
+          # 用 -U 永远匹配不到。改 --defined-only。
+          nm -g --defined-only "$LIB" 2>/dev/null \
+            | grep -E "_coomi_(start|port|version)" \
+            || { echo "::error::静态库缺少 coomi_* 符号"; exit 1; }
           echo "✅ 静态库自检通过"
 
       - uses: actions/upload-artifact@v4
@@ -176,7 +179,7 @@ jobs:
           fi
           ls -la "$LIB"
           file "$LIB"
-          nm -gU "$LIB" 2>/dev/null | grep -E "_coomi_(start|port|version)" \
+          nm -g --defined-only "$LIB" 2>/dev/null | grep -E "_coomi_(start|port|version)" \
             || { echo "::error::静态库缺少 coomi_* 符号"; exit 1; }
 
       - name: 安装 XcodeGen
