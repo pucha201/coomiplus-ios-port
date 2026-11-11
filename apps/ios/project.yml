@@ -1,0 +1,75 @@
+#
+# XcodeGen 工程描述。
+#
+#   brew install xcodegen
+#   cd apps/ios && xcodegen generate && open CoomiIOS.xcodeproj
+#
+# 架构：**引擎跑在 App 自己进程内**（内嵌 iSH Linux 内核），
+# 不依赖外部 iSH App —— 因此没有「切到前台 iSH 被 iOS 挂起」的问题。
+#
+# 两种构建模式：
+#   ① 未集成 iSH（默认）：COOMI_HAS_ISH=0，用 ish_support.c 的桩实现。
+#      App 能编译、能跑 UI，点启动会明确提示「未链接 iSH 运行时」。
+#   ② 已集成 iSH：把 iSH 编成静态库后，打开 COOMI_HAS_ISH=1 并链接 libish.a。
+#      见 docs/README.md「集成 iSH 静态库」。
+name: CoomiIOS
+options:
+  bundleIdPrefix: app.coomi
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    # 默认不集成 iSH；集成后改成 1（或在 xcconfig 里覆盖）。
+    GCC_PREPROCESSOR_DEFINITIONS:
+      - "$(inherited)"
+      - "COOMI_HAS_ISH=0"
+
+targets:
+  CoomiIOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: CoomiApp/Sources
+      - path: CoomiApp/Resources
+        optional: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.coomi.ios
+        MARKETING_VERSION: "1.6.8"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        INFOPLIST_KEY_CFBundleDisplayName: Coomi
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        # iSH 内核是 C，需要 C99 与这几个头搜索路径（集成后由 ish.xcconfig 提供）。
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/ThirdParty/ish"
+        # 集成 iSH 静态库后把下面两行取消注释：
+        # OTHER_LDFLAGS: ["$(inherited)", "-lish"]
+        # LIBRARY_SEARCH_PATHS: ["$(inherited)", "$(SRCROOT)/ThirdParty/ish/build"]
+    info:
+      path: CoomiApp/Info.plist
+      properties:
+        CFBundleDisplayName: Coomi
+        UILaunchScreen: {}
+        UIRequiresFullScreen: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # 允许明文 http 到 127.0.0.1（iOS 默认禁止）。
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSExceptionDomains:
+            127.0.0.1:
+              NSExceptionAllowsInsecureHTTPLoads: true
+              NSIncludesSubdomains: false
+            localhost:
+              NSExceptionAllowsInsecureHTTPLoads: true
+        # 注意：**不再声明 ish scheme**。
+        # 早期方案靠 `ish://run?cmd=` 拉起外部 iSH App，但 iOS 会把后台的 iSH 挂起
+        # → 引擎停摆。现在引擎在本进程内运行，不需要跨 App 跳转。
+    dependencies: []

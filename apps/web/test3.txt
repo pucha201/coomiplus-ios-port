@@ -1,0 +1,156 @@
+
+> coomi-web@0.2.0 test
+> node --test tests/marketSearch.test.ts tests/chatTimeline.test.ts tests/collabMapper.test.ts tests/styleTokens.test.mjs tests/streamReveal.test.ts tests/retryPhase.test.ts tests/pairing.test.ts tests/connectionContext.test.ts tests/hydration.test.ts tests/sendGuard.test.ts tests/deviceRecords.test.ts tests/providerGate.test.ts tests/transportAttribution.test.ts tests/brokerConfig.test.ts tests/hostPresence.test.ts tests/configPrompt.test.ts tests/modelOwner.test.ts tests/pairingCountdown.test.ts tests/textScaleGuard.test.mjs tests/deviceDiscovery.test.ts tests/drawerFirstFrame.test.ts tests/frontendAudit.test.ts && vitest run tests/modePersistence.test.ts tests/deviceEndpointHeal.test.ts tests/cloudSwitchReset.test.ts tests/p2pHttp.test.ts tests/remoteFallback.test.ts tests/relayPayloadFanout.test.ts tests/relayLiveness.test.ts tests/remoteRelayPersistence.test.ts tests/cloudHttpIsolation.test.ts tests/cloudSessionIsolation.test.ts tests/connectionAttribution.test.ts tests/sessionListStability.test.ts tests/providerKnowledge.test.ts tests/hostProbe.test.ts
+
+✔ the broker carried by the pairing code wins over env and default (3.6087ms)
+✔ a broker-less pairing code falls back to the build-time override (0.5413ms)
+✔ nothing configured keeps the public default instead of throwing (0.3705ms)
+✔ a broker that is not a websocket address is rejected outright (0.4119ms)
+✔ plaintext ws is only accepted for localhost and LAN addresses (1.6735ms)
+✔ folds reasoning / tools / answer of one turn into a single process block (9.7878ms)
+✔ trailing reasoning no longer swallows the answer (reported bug) (0.6709ms)
+✔ a turn with tools still running keeps tools in the process (1.4728ms)
+✔ plain assistant replies keep the legacy bubble blocks (1.625ms)
+✔ notices and question cards break the process run (0.7368ms)
+✔ builds a 5,000-item variable-height timeline without truncating content (23.919ms)
+✔ session fallback persistence keeps the newest bounded transcript intact (5.428ms)
+✔ streaming reuses unchanged blocks so history is not re-rendered per chunk (1.1465ms)
+✔ tool groups keep identity only while their card references are unchanged (0.8378ms)
+✔ chat templates retain dynamic measurement and lazy image contracts (86.4551ms)
+✔ maps persisted Rust collab tasks into the frontend domain model (58.451ms)
+✔ normalizes legacy status and file events (13.8309ms)
+✔ maps orchestrated orchestration pipeline and role path rules (0.9822ms)
+✔ keeps draft status for pending start tasks (0.5456ms)
+✔ 第一次没配置：话术指向配置供应商，不说文件坏了 (6.6492ms)
+✔ 配置读不出来：要说清是配置本身出问题，别让人重新填一遍 (0.8307ms)
+✔ 认不出的 reason 退回引擎原文，仍然给出安全入口 (22.8467ms)
+✔ 只认白名单里的 route：远端引擎给别的地址就不给跳转 (1.1807ms)
+✔ local mode never keeps a cloud device key (2.5151ms)
+✔ cloud mode without a selected device is its own empty context (0.5964ms)
+✔ each paired computer gets its own history context (0.386ms)
+✔ 发现回包按 deviceId 去重并丢掉非法条目 (4.703ms)
+✔ 不是数组 / 缺字段时返回空列表 (2.0954ms)
+✔ 按 deviceId 拼出电脑当前地址，IPv6 自动加方括号 (0.9332ms)
+✔ 桌面返回的 peer 列表只更新在线状态，绝不覆盖手机存的配对凭据 (5.5634ms)
+✔ 电脑一条 peer 都没返回时不改写任何记录 (0.5166ms)
+✔ 自己的 peer 记录在电脑上消失时标记「已被电脑移除」 (0.3987ms)
+✔ 被电脑移除的设备不再参与冷启动自动连接 (0.5365ms)
+✔ 手机删除设备永远先在本地忘记，连不上电脑也算成功 (0.6464ms)
+✔ 有活通道时同时请电脑作废本机凭据 (0.3131ms)
+✔ 连接码里没有 peerId 或配对已过期时不去打扰电脑 (0.4073ms)
+✔ 引擎滑动过的到期时间回填到本地记录（续期同步） (0.3912ms)
+✔ 引擎到期时间早于本地时不把本地值缩小 (0.5287ms)
+✔ 过期未满一天的配对还有救：引擎可能已经滑动续期 (1.302ms)
+✔ drawer styles are installed before the first render (19.2682ms)
+✔ drawer panel paints nothing before the runtime patch arrives (25.6381ms)
+✔ leaving the chat page releases the drawer tap layer (23.8975ms)
+✔ 连接条给页面留 28px 占位，抽屉压在连接条之上 (29.8028ms)
+✔ 云端首页在 390px 视口内收住宽度，不再横向溢出 (6.5138ms)
+✔ 选中设备不等于已连接：云端提示按 transport 状态说话 (3.6434ms)
+✔ 真实桥的添加设备表单只认完整连接码，不再先弹 6 格短码 (3.9789ms)
+✔ 生成结束切虚拟列表后逐帧贴底，并保留回到底部入口 (7.9104ms)
+✔ 连接状态只在顶部报一次，输入栏不再挂「消息没有发出」 (6.1763ms)
+✔ 骨架屏四种变体都有真实布局，加载态不会塌成空白 (5.4838ms)
+✔ 后台任务完成通知不再自带第二个勾 (17.0017ms)
+✔ 探活结果过期了就不开口，别拿十分钟前的判断骗人 (2.5765ms)
+✔ 电脑应答了就说明故障在通道，不在电脑 (0.9007ms)
+✔ 局域网没有应答时给出可能的原因，不把话说死 (0.4398ms)
+✔ 只有云端、选了电脑、通道没通、且探活不频繁时才去探一次 (0.563ms)
+✔ deferred hydration does not run before the transport is open (2.815ms)
+✔ one open event runs each pending task exactly once (2.3941ms)
+✔ a failing task is retried on the next open instead of being dropped (0.5747ms)
+✔ the same task identity is queued only once (0.4083ms)
+✔ startup retries hydration when the transport opens, not on a fixed timer (1.8358ms)
+✔ the session store drains pending hydration when its transport reaches open (4.3721ms)
+✔ filters market items across searchable metadata (5.0897ms)
+✔ 本机模式没什么好提醒的，别在标题下面插一条无关的话 (4.4204ms)
+✔ 云端模式要点名是哪台电脑，并且说清改动落在电脑那边 (2.827ms)
+✔ 没有设备名也要说话，不能出现「正在编辑「」的模型」 (1.0233ms)
+✔ 云端但还没选电脑：先让人选，别让他改一份不知道落在哪的配置 (0.6086ms)
+✔ a pairing token past its expiry is reported expired (2.7498ms)
+✔ boot auto-connect picks a device that was seen online recently (0.9198ms)
+✔ boot auto-connect 只放过名义过期但可能已被引擎续期的配对 (0.4906ms)
+✔ boot auto-connect stays empty instead of falling back to a stale device (0.5025ms)
+✔ 不知道有效期就别编一个出来 (5.8771ms)
+✔ 有效期还长：说还剩多久，同时说明用过就自动续 (0.9322ms)
+✔ 不到 12 小时：改成「下次连上会续期」，别报成马上要断 (0.3951ms)
+✔ 过期了就说要在电脑上重新生成，别只写「已过期」 (0.4397ms)
+✔ 不满一小时只显示分钟，不写「0 小时 40 分」 (0.9214ms)
+✔ 界面一行：被撤销的设备不报倒计时，改成说怎么重新连上 (0.6302ms)
+✔ 界面一行：正常的有效期照报，过期用本端自己的说法 (0.4205ms)
+✔ 模型列表就绪时正常发送 (1.8055ms)
+✔ 列表还没读回来时只是「不知道」，不能当成「没有模型」 (0.4297ms)
+✔ 已经确认这台引擎上一个模型都没有，才把用户带去添加模型 (0.2385ms)
+✔ 就绪判断优先于其他两态 (0.2238ms)
+✔ the very first connection failures stay in connecting during the grace window (1.7626ms)
+✔ a never-opened connection becomes reconnecting only after the grace window (0.4312ms)
+✔ a connection that was open before reports reconnecting immediately (0.4634ms)
+✔ an open channel lets the turn start (2.7895ms)
+✔ demo mode sends to the scripted transport instead of the engine (0.5888ms)
+✔ sending while offline is refused with a reason, not silently dropped (0.7364ms)
+✔ a reconnecting channel reports the retry state (0.9378ms)
+✔ the first handshake queues the message instead of refusing it (0.5114ms)
+✔ the store and the composer both consult the same gate (5.6224ms)
+✔ remounting a message with existing content shows it instead of replaying from zero (3.2609ms)
+✔ a brand-new empty message still reveals from zero (0.567ms)
+✔ stored reveal progress wins over the content length (0.5276ms)
+✔ reveal progress never moves backwards (1.0727ms)
+✔ 档上间距/字号/行高/层级必须使用设计令牌 (121.1156ms)
+✔ CSS 变量必须带 -- 前缀（防 var(name) 这种无效变量） (66.6801ms)
+✔ 工具卡片与消息气泡必须有入场过渡（不得 animation:none 硬弹出来） (1.4707ms)
+✔ 全局必须锁掉 WebKit 自己的字号放大 (6.989ms)
+✔ 字号会跟着缩放档变胖的块，不许写死 height (78.6558ms)
+✔ 本机模式没有云端通道诊断时不编造任何通道状态 (2.2778ms)
+✔ 直连握手中只报「正在尝试哪条通道」，不算失败 (1.7897ms)
+✔ 切到加密中转时把上一条通道为什么放弃一起说清 (0.6773ms)
+✔ 三条通道的名字分别是直连、中转、局域网 (0.2594ms)
+✔ 连上的那条通道报「已连上」，不再报重连次数 (0.2919ms)
+✔ 配对凭据失效说成人话并给出下一步，而不是 401 (1.9605ms)
+✔ 信令、打洞、超时的英文原因各归各的说法 (0.8696ms)
+✔ 中转自己的几种失败各有各的说法，不许都写成超时 (0.4354ms)
+✔ MQTT broker 的 WebSocket 失败翻成人话，不把英文原样甩给用户 (0.4148ms)
+✔ broker 通了但对端不在：报「电脑端没有应答」，不说中转服务坏了 (0.4976ms)
+✔ 「中转不可用：直连超时」只报最外面那层失败 (0.2412ms)
+✔ 局域网端口没人应答时提示检查电脑是否在跑 (0.2929ms)
+✔ 局域网探活成功时说的是「谁先应答」，不是又一条超时 (0.219ms)
+✔ 认不出的原因原样带出，绝不编造 (0.6274ms)
+✔ 重连中说明通道断过、正在恢复 (0.2526ms)
+ℹ tests 113
+ℹ suites 0
+ℹ pass 113
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1512.2082
+
+[1m[46m RUN [49m[22m [36mv4.0.18 [39m[90mG:/DSH/coomi-full-project/apps/web[39m
+
+ [32m✓[39m tests/modePersistence.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m tests/p2pHttp.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 88[2mms[22m[39m
+ [32m✓[39m tests/providerKnowledge.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 609[2mms[22m[39m
+     [33m[2m✓[22m[39m 刚进 App 一次都没读过：是「不知道」，不是「没模型」 [33m 587[2mms[22m[39m
+ [32m✓[39m tests/connectionAttribution.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 638[2mms[22m[39m
+     [33m[2m✓[22m[39m 通道诊断变成界面能直接显示的一句话 [33m 618[2mms[22m[39m
+ [32m✓[39m tests/cloudHttpIsolation.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 656[2mms[22m[39m
+     [33m[2m✓[22m[39m proxies cloud API calls over the encrypted channel even without a saved engine base [33m 626[2mms[22m[39m
+ [32m✓[39m tests/relayPayloadFanout.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m tests/relayLiveness.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 56[2mms[22m[39m
+ [32m✓[39m tests/cloudSessionIsolation.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 736[2mms[22m[39m
+     [33m[2m✓[22m[39m 切进云端上下文时不会把手机缓存的旧列表铺出来 [33m 647[2mms[22m[39m
+ [32m✓[39m tests/sessionListStability.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 743[2mms[22m[39m
+     [33m[2m✓[22m[39m 引擎回同一份列表时行对象身份保持不变 [33m 722[2mms[22m[39m
+ [32m✓[39m tests/deviceEndpointHeal.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 839[2mms[22m[39m
+     [33m[2m✓[22m[39m 探活失败 → 局域网发现同一台电脑 → 换地址并重试成功 [33m 823[2mms[22m[39m
+ [32m✓[39m tests/cloudSwitchReset.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 656[2mms[22m[39m
+     [33m[2m✓[22m[39m 本地对话切到云端（未选设备）→ 清空历史 + 回到新建对话 [33m 632[2mms[22m[39m
+ [32m✓[39m tests/remoteRelayPersistence.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 79[2mms[22m[39m
+ [32m✓[39m tests/remoteFallback.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 74[2mms[22m[39m
+ [32m✓[39m tests/hostProbe.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 1305[2mms[22m[39m
+     [33m[2m✓[22m[39m 有任何 HTTP 应答就算电脑在线，哪怕这一枪是 401 [33m 1264[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m14 passed[39m[22m[90m (14)[39m
+[2m      Tests [22m [1m[32m50 passed[39m[22m[90m (50)[39m
+[2m   Start at [22m 19:50:38
+[2m   Duration [22m 3.05s[2m (transform 11.12s, setup 0ms, import 10.65s, tests 6.50s, environment 16ms)[22m
+

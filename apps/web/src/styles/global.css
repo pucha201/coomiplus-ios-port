@@ -1,0 +1,1093 @@
+/*
+  Coomi 设计令牌 —— 蓝 (#2d61c6) + 白为主色，橙 (#d47458) 作点缀。
+  排版语言参考 DeepSeek 移动端：大面积白底、浅灰填充块、16px 卡片圆角、
+  全圆药丸、细描线图标、"浅蓝底 + 蓝字"表达选中态。
+  色值与 Android 侧 res/values/colors_coomi.xml 对齐，跨 WebView 边界不跳色。
+*/
+:root {
+  /* ── 品牌 ── */
+  --blue: #2d61c6;
+  --blue-press: #24509f;
+  --blue-soft: #eaf0fc;
+  --blue-soft-2: #dce7f9;
+  --blue-border: #c6d7f4;
+  --orange: #b54d2f; /* 亮：原 #d47458 在 orange-soft 上仅 2.94:1；加深到 4.65:1（只动明度） */
+  --orange-soft: #fcf1ec;
+  --orange-border: #f0d5c9;
+
+  /* ── 表面 ── */
+  --bg: #ffffff;
+  --page: #f2f5f9;
+  --fill: #f4f6fa;
+  --fill-strong: #e9edf4;
+  --fill-press: #dfe5ee;
+  --border: #e2e7f0;
+  --border-strong: #d4dbe6;
+
+  /* ── 文字 ── */
+  --text: #1b1e23;
+  --text-2: #5c6270;
+  --text-3: #686e7c; /* 亮：原 #9096a2 在 bg 上 2.97:1、page 上 2.72:1 均不达标；加深到 5.11/4.68:1 */
+
+  /* ── 语义 ── */
+  --ok: #197e56;   /* 亮：原 #1f9d6b 在 ok-soft 上 3.12:1；加深到 4.58:1 */
+  --ok-soft: #e9f7f1;
+  --warn: #97641a; /* 亮：原 #b7791f 在 warn-soft 上 3.30:1；加深到 4.58:1 */
+  --warn-soft: #fbf3e4;
+  --danger: #c73927; /* 亮：原 #d9503f 在 danger-soft 上 3.59:1、白字 4.06:1；加深后 4.60:1、白字 5.19:1（一个值同时修好文字与填充两职） */
+  --danger-soft: #fceeec;
+  --danger-border: #f4cfc9;
+
+  /* ── 代码 ── */
+  --code-bg: #f5f6f8;
+  --code-text: #313743;
+  --code-bg-dark: #1e2430;
+
+  /* ── 形状 / 阴影 ── */
+  --r-card: 16px;
+  --r-md: 12px;
+  --r-sm: 8px;
+  --r-sheet: 20px;
+  --r-pill: 999px;
+  --shadow-1: 0 1px 2px rgba(23, 32, 54, 0.06), 0 4px 14px rgba(23, 32, 54, 0.055);
+  --shadow-2: 0 10px 30px rgba(23, 32, 54, 0.13), 0 2px 8px rgba(23, 32, 54, 0.06);
+  --shadow-sheet: 0 -10px 44px rgba(23, 32, 54, 0.16);
+  --shadow-drawer: 10px 0 44px rgba(23, 32, 54, 0.18);
+
+  /* ── 动效令牌：全 app 只有这一套 ──
+     语义化的分法是「变化发生在多大的屏幕上」，而不是「哪个组件」——
+     时长要表达的是量级，所以同量级的东西必须同一个值；按组件分就会出现
+     0.1s / 0.12s / 0.14s / 0.15s / 0.16s 这种各写各的，视觉上却只差几帧。 */
+  --dur-press: 80ms;        /* 按压反馈：唯一的手感时长，不回弹 */
+  --dur-fast: 140ms;        /* 悬停 / 颜色 / 描边 / 小图标旋转：同一元素上的局部变化 */
+  --dur-base: 220ms;        /* 弹层、面板、进度条等「整块」的出现与消失 */
+  --dur-slow: 320ms;        /* 大面积：抽屉、全屏级位移 */
+  --dur-loop: 1.2s;         /* 呼吸 / 脉冲 / 光标：唯一的「进行中」节奏 */
+  --dur-loop-slow: 1.6s;    /* 等待心跳：刻意慢一档，读作「等你」而不是「在跑」 */
+  --dur-loop-sweep: 2.8s;   /* 空态插画的漂浮装饰 */
+  --dur-spin: 1s;           /* 旋转指示：1 圈/秒，与真 spinner 同速 */
+  /* 空态漂浮圆点的相位差：这不是「时长」而是「错开多久开始飘」。
+     首页 / 群组首页 / 协同三个空态用的是同一组圆点，相位必须一致，
+     否则同一个插画在不同页会飘成不同的节奏。 */
+  --orb-phase-1: 0.6s;
+  --orb-phase-2: 1.2s;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);      /* 唯一的入场曲线 */
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);   /* 循环往复（呼吸、脉冲） */
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1); /* 一次性入场的小回弹；禁用于按压 */
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);   /* 大面积位移 */
+
+  /* 按压态全 app 只有一种（缩放），理由见下方「按压反馈」段。 */
+  --press-scale: 0.98;
+
+  /* ── 入场：时长 / 位移 / 曲线 三件套。所有页面与区块都只准用这几个 ──
+     配套公用类 .enter-page / .enter-flat / .enter-block / .enter-item /
+     .enter-append / .enter-pop 见文件下方「入场动效」段。
+     曲线统一复用上面的 --ease-out，不另造一条曲线。 */
+  --enter-page-dur: 140ms; --enter-page-shift: 8px;      /* 路由前进/返回（out-in，每段 140ms，合计 280ms） */
+  --enter-flat-dur: 160ms;                                /* 同级切换 / tab：纯淡入，无位移 */
+  --enter-block-dur: 240ms; --enter-block-shift: 8px;     /* 面板 / 区块展开 */
+  --enter-item-dur: 160ms; --enter-item-shift: 4px;       /* 列表首批 */
+  --enter-item-stagger: 24ms;                             /* 交错步长，只做前 8 项 */
+  --enter-append-dur: 160ms; --enter-append-shift: 2px;   /* 新消息 / 追加项 */
+  --enter-pop-dur: 140ms;                                 /* 菜单 / 下拉 */
+
+  /* ── 展开：时长 / 位移 / 曲线。语义与 --enter-* 完全相反，见下方「两类动效语义」段 ──
+     打开与关闭是**一对**动画，不是一个动画的两个方向：
+     CSS animation 是一次性的，开/关两个方向不能靠同一条 keyframes 反着放
+     （方向变了必须换一条 keyframes + 换一个时长），所以这里成对给。
+     · 打开比关闭快一档：关闭要等用户看清「它要走了」，打开只要「它来了」；
+     · 位移都是 6px 量级 —— 展开/收起表达的是「这块东西在不在」，
+       位移大了会读成「页面在滑动」，语义就错了；
+     · 曲线：打开走 --ease-out（冲出去后减速到位），关闭走 --ease-emphasized
+       （起步慢、收尾干脆），两者都不能用会回弹的 --ease-spring。 */
+  --expand-open-dur: 200ms;  --expand-open-shift: 8px;   /* 抽屉 / 菜单 / 折叠面板「打开」 */
+  --expand-close-dur: 180ms; --expand-close-shift: 6px;  /* 同上「关闭」；比打开短，不让人等烦 */
+
+  /* ── 间距阶梯：8pt 网格 + 4pt 半档 ──
+     只保留「值 = 网格档」这一种令牌，不做「语义别名」。
+     为什么没有 --inset / --gap / --section：
+     这三个别名曾经把 8px / 10px / 12px 三种真实内边距统一成一个值
+     （别名给的是 16px / 12px / 24px），结果是 7 处排版整体变大、元素错位，
+     而且因为「看起来更整齐」很难在真机上第一眼归因。
+     同一个「容器内边距」在这套界面里本来就随位置而变（版心 12px、抽屉外壳 8px），
+     强行统一只会毁掉节奏。间距一律直接写 --sp-N，值就是原来那个字面量。 */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-7: 32px; --sp-8: 40px; --sp-9: 48px;
+
+  /* ── 字阶：6 档（字号/行高只在这里定义，各主题不必重复）── */
+  --fs-caption: 11px; --lh-caption: 16px;
+  --fs-label: 12px;   --lh-label: 18px;
+  --fs-sub: 13px;     --lh-sub: 20px;
+  --fs-body: 14px;    --lh-body: 22px;
+  --fs-body-lg: 15px; --lh-body-lg: 24px;
+  --fs-strong: 16px;  --lh-strong: 24px;
+  --fs-heading: 18px; --lh-heading: 26px;
+  --fs-title: 20px;   --lh-title: 28px;
+  --fw-normal: 400; --fw-medium: 500; --fw-semibold: 600;
+
+  /* ── 层级阶梯：取代散落各处的 z-index 数值 ── */
+  --z-base: 0; --z-sticky: 10; --z-header: 20; --z-drawer: 30;
+  --z-sheet: 40; --z-toast: 50; --z-modal: 60;
+  /* 语义令牌：弹层/浮层体系（避免裸 z-index 各自为政） */
+  --z-overlay: 70;    /* 遮罩式弹层（预览、审批、提问） */
+  --z-overlay-2: 80;  /* 需要压住弹层的二级浮层 */
+  --z-popover: 90;    /* 选择器/浮窗 */
+  --z-popover-top: 100;
+  --z-theme: 110;
+  /* 输入栏浮层（更多选项卡 / 模型面板 / 生命卡）：与遮罩同处 .shell 层叠上下文，
+     只需压过遮罩(1)与聊天区悬浮控件(80)在“同一上下文内”的比较口径 —— 用它取代裸 2/3/4 */
+  --z-composer-panel: 85;
+  --z-chat-fab: 80;   /* 聊天区悬浮控件（历史转盘圆钮等） */
+
+  /* ── 排版 ── */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC",
+    "HarmonyOS Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* 键盘占位（visualViewport 差值，由 utils/keyboardInset 写入）：
+     原生 insets 垫高失效时，底部输入栏/弹层靠它再补一道，两条路不叠加。 */
+  --kb-inset: 0px;
+  --kb-offset: 0px;
+  --chat-background-overlay: var(--bg);
+  --chat-background-image: none;
+
+  /* ── 旧组件仍在用的别名，保留以免一次性大改 ── */
+  --accent: var(--blue);
+  --accent-hover: var(--blue-press);
+  --accent-soft: var(--blue-soft);
+  --accent-border: var(--blue-border);
+  --accent-dim: var(--blue-border);
+  --text-dim: var(--text-2);
+  --text-faint: var(--text-3);
+  --bg-subtle: var(--fill);
+  --bg-soft: var(--fill-strong);
+  --bg-hover: var(--fill-press);
+  --bg-card: #ffffff;
+  --bg-input: var(--fill);
+  --bg-elevated: #ffffff;
+  --user-bubble: var(--blue);
+  --user-text: #ffffff;
+  --radius: var(--r-card);
+  --radius-sm: var(--r-md);
+  --radius-xs: var(--r-sm);
+
+  color-scheme: light;
+}
+
+/* ── 暗色主题：跟随系统深色模式 ──
+   Android 侧（CoomiActivity）把系统深色状态经 JS 桥写入 <html data-theme="dark">；
+   桌面浏览器由前端 matchMedia 监听自动设置，两者等效。 */
+:root[data-theme='dark'] {
+    color-scheme: dark;
+    /* 暗色不是越黑越高级：底与卡片差 6~8 阶、描边差 12 阶，
+       选项/输入框才有边界。之前 #131518 底 + #2a323d 描边在很多屏幕上糊成一块。 */
+    --bg: #1a1d22;
+    --page: #121519;
+    --fill: #23282f;
+    --fill-strong: #2d333c;
+    --fill-press: #38404a;
+    --border: #3a424d;
+    --border-strong: #4b5462;
+    --text: #eef1f7;
+    --text-2: #a4acba;
+    --text-3: #7d8694; /* 暗：原 #68717f 在 bg 上 3.71:1、fill 上 3.43:1；提亮到 4.97/4.59:1（只动明度） */
+    --blue: #5b8bf0;
+    --blue-press: #6f9bf3;
+    --blue-soft: #172543; /* 暗：加深使 --blue 文字在软底上 4.19→4.63:1（不动蓝本身，保住链接/图标色） */
+    --blue-soft-2: #182541; /* 暗：同上，3.63→4.64:1 */
+    --blue-border: #3b5285;
+    --orange: #e08a6b;
+    --orange-soft: #3a2821;
+    --orange-border: #5e3b2e;
+    --ok: #38b98a;
+    --ok-soft: #1b362c;
+    --warn: #d3a44e;
+    --warn-soft: #3a3120;
+    --danger: #e86a58;
+    --danger-soft: #3d241f;
+    --danger-border: #613630;
+    --code-bg: #1a1d22;
+    --code-text: #cdd3de;
+    --code-bg-dark: #0d0f12;
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-2: 0 6px 24px rgba(0, 0, 0, 0.45);
+    --shadow-sheet: 0 -10px 44px rgba(0, 0, 0, 0.55);
+    --shadow-drawer: 10px 0 44px rgba(0, 0, 0, 0.55);
+    --bg-card: #21252b;
+    --bg-input: #252a31;
+    --bg-elevated: #2a2f37;
+    --user-bubble: #2d6aec; /* 暗：白字在亮蓝 #5b8bf0 上仅 3.28:1，深一档同色相蓝后 4.79:1 */
+    --user-text: #ffffff;
+    --blue-fill: #2d6aec;        /* 暗：主按钮填充蓝（白字 ≥4.5） */
+    --blue-fill-press: #1455de;  /* 暗：主按钮按压态 */
+  }
+:root[data-theme='book'] {
+  color-scheme: light;
+  --bg: #f7f2e7;
+  --page: #eee6d7;
+  --fill: #f1eadc;
+  --fill-strong: #e7decc;
+  --fill-press: #ddd2bd;
+  --border: #d8ccb6;
+  --border-strong: #c7b99f;
+  --text: #2d3028;
+  --text-2: #626457;
+  --text-3: #8a8979;
+  --blue: #496957;
+  --blue-press: #395343;
+  --blue-soft: #dce8dc;
+  --blue-soft-2: #cdddcf;
+  --blue-border: #abc1ae;
+  --orange: #a76642;
+  --orange-soft: #efe0d3;
+  --orange-border: #d9bda8;
+  --bg-card: #fffaf0;
+  --bg-input: #f1eadc;
+  --bg-elevated: #fffaf0;
+  --user-bubble: #496957;
+}
+:root[data-theme='orange'] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --page: #fff7f1;
+  --fill: #fff2e8;
+  --fill-strong: #ffe7d5;
+  --fill-press: #ffdbc2;
+  --border: #f3dac8;
+  --border-strong: #eac4a8;
+  --text: #28231f;
+  --text-2: #6e625a;
+  --text-3: #9b8c82;
+  --blue: #a94f12;
+  --blue-press: #873b0b;
+  --blue-soft: #f8e9de;
+  --blue-soft-2: #f1d8c6;
+  --blue-border: #ddb18f;
+  --orange: #a94f12;
+  --orange-soft: #f8e9de;
+  --orange-border: #ddb18f;
+  --bg-card: #ffffff;
+  --bg-input: #fff7f1;
+  --bg-elevated: #ffffff;
+  --user-bubble: #a94f12;
+}
+:root[data-theme='ink'] {
+  color-scheme: dark;
+  --bg: #17201c; --page: #0f1613; --fill: #202b26; --fill-strong: #293630; --fill-press: #33443c;
+  --border: #35453e; --border-strong: #455a50;
+  --text: #e8eee9; --text-2: #a3b1a8; --text-3: #6f8177;
+  --blue: #63b894; --blue-press: #7ac7a7; --blue-soft: #17392d; --blue-soft-2: #1e493a; --blue-border: #366956;
+  --orange: #d49367; --orange-soft: #38291f; --orange-border: #664733;
+  --ok: #63b894; --ok-soft: #17392d; --warn: #d0a451; --warn-soft: #362e1d;
+  --danger: #e07168; --danger-soft: #3b2423; --danger-border: #673b39;
+  --code-bg: #151e1b; --code-text: #d3ddd6; --code-bg-dark: #080d0b;
+  --bg-card: #1c2622; --bg-input: #202b26; --bg-elevated: #253029; --user-bubble: #397e62;
+  --shadow-1: 0 2px 8px rgba(0,0,0,.32); --shadow-2: 0 7px 26px rgba(0,0,0,.48); --shadow-sheet: 0 -10px 44px rgba(0,0,0,.56); --shadow-drawer: 10px 0 44px rgba(0,0,0,.56);
+}
+:root[data-theme='abyss'] {
+  color-scheme: dark;
+  --bg: #15202a; --page: #0d151d; --fill: #1d2b36; --fill-strong: #263745; --fill-press: #314655;
+  --border: #2f4454; --border-strong: #3f5b70;
+  --text: #e5edf2; --text-2: #9db0bc; --text-3: #667d8d;
+  --blue: #55b8cf; --blue-press: #72c7d9; --blue-soft: #123444; --blue-soft-2: #174457; --blue-border: #32677a;
+  --orange: #e08b71; --orange-soft: #3b2925; --orange-border: #65453b;
+  --ok: #4fc49d; --ok-soft: #12362d; --warn: #d4ad56; --warn-soft: #362f1e;
+  --danger: #ed746e; --danger-soft: #3d2425; --danger-border: #693a3b;
+  --code-bg: #101c26; --code-text: #cedae2; --code-bg-dark: #060c11;
+  --bg-card: #1a2632; --bg-input: #1d2b36; --bg-elevated: #223240; --user-bubble: #247b91;
+  --shadow-1: 0 2px 8px rgba(0,0,0,.34); --shadow-2: 0 7px 26px rgba(0,0,0,.5); --shadow-sheet: 0 -10px 44px rgba(0,0,0,.58); --shadow-drawer: 10px 0 44px rgba(0,0,0,.58);
+}
+:root[data-theme='ember'] {
+  color-scheme: dark;
+  --bg: #221d1a; --page: #171312; --fill: #2d2622; --fill-strong: #3a312b; --fill-press: #463b34;
+  --border: #443931; --border-strong: #574940;
+  --text: #eee9e5; --text-2: #b5a8a0; --text-3: #7e6f67;
+  --blue: #d18a62; --blue-press: #dfa17d; --blue-soft: #40291f; --blue-soft-2: #513327; --blue-border: #76503b;
+  --orange: #e1a05f; --orange-soft: #402f20; --orange-border: #6b4c2e;
+  --ok: #70b995; --ok-soft: #20362c; --warn: #d7ad5d; --warn-soft: #3b311f;
+  --danger: #e47569; --danger-soft: #422624; --danger-border: #6d3c37;
+  --code-bg: #211b18; --code-text: #ddd3cc; --code-bg-dark: #0d0b0a;
+  --bg-card: #2a2320; --bg-input: #2d2622; --bg-elevated: #332a25; --user-bubble: #98583a;
+  --shadow-1: 0 2px 8px rgba(0,0,0,.34); --shadow-2: 0 7px 26px rgba(0,0,0,.5); --shadow-sheet: 0 -10px 44px rgba(0,0,0,.58); --shadow-drawer: 10px 0 44px rgba(0,0,0,.58);
+}
+:root[data-theme='celadon'] {
+  color-scheme: light;
+  --bg: #f8fbf9; --page: #edf3ef; --fill: #f0f5f2; --fill-strong: #e2ebe5; --fill-press: #d6e2da;
+  --border: #dce6df; --border-strong: #c8d7cd;
+  --text: #202a25; --text-2: #596a60; --text-3: #89988f;
+  --blue: #39745d; --blue-press: #2d5d4a; --blue-soft: #deeee6; --blue-soft-2: #cde3d7; --blue-border: #a9c9b8;
+  --orange: #b66f4f; --orange-soft: #f5e9e2; --orange-border: #dfc1b2;
+  --bg-card: #ffffff; --bg-input: #f0f5f2; --bg-elevated: #ffffff; --user-bubble: #39745d;
+}
+:root[data-theme='linen'] {
+  color-scheme: light;
+  --bg: #fbfaf7; --page: #f1f0ec; --fill: #f4f2ed; --fill-strong: #e9e6df; --fill-press: #dedad1;
+  --border: #e4e1da; --border-strong: #d2cdc3;
+  --text: #262728; --text-2: #626365; --text-3: #91908d;
+  --blue: #4f607f; --blue-press: #3e4c67; --blue-soft: #e6eaf1; --blue-soft-2: #d7dde8; --blue-border: #b9c3d4;
+  --orange: #b66b4e; --orange-soft: #f4e8e2; --orange-border: #ddbeb1;
+  --bg-card: #fffefa; --bg-input: #f4f2ed; --bg-elevated: #fffefa; --user-bubble: #4f607f;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* 点击不出现蓝色高亮方块：WebView 的 tap highlight / focus ring 全部去掉，
+   交互反馈交给各组件自己的 :active 样式。 */
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--blue-border);
+  box-shadow: 0 0 0 3px var(--blue-soft);
+}
+button, a, [role="button"], input, textarea, select, label {
+  -webkit-tap-highlight-color: transparent !important;
+  -webkit-touch-callout: none;
+}
+::selection { background: var(--blue-soft); }
+/* 侧栏展开时的渐进模糊半径：注册成 <length> 才能被 transition 插值。
+   未注册的自定义属性只能离散跳变，看起来就是「模糊突然出现」。 */
+@property --drawer-blur {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
+html, body, #app { height: 100%; margin: 0; }
+/* 字号一律由 CSS 说了算：WebViews 会按系统字体缩放自己放大文字（font inflation），
+   写死高度的控件不跟着长，文字就被切掉、行叠行——看着像「换个模式界面就崩」。
+   Android 侧配套的 setTextZoom(100) 在 CoomiActivity 里，两边要一起锁。 */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body-lg);
+  line-height: 1.62;
+  overscroll-behavior-y: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+#app { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; padding: 0; }
+input, textarea { font-family: inherit; color: inherit; }
+select { color-scheme: inherit; }
+select option, select optgroup { background: var(--bg); color: var(--text); }
+a { color: var(--blue); text-decoration: none; }
+h1, h2, h3 { margin: 0; font-weight: 600; }
+
+/* ── 按钮 ── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 46px; padding: 0 18px; border-radius: var(--r-md);
+  background: var(--fill-strong); color: var(--text);
+  font-size: var(--fs-body-lg); font-weight: 500; letter-spacing: 0.01em;
+  transition:
+    background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-press) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.btn:active { transform: scale(var(--press-scale)); }
+.btn-primary { background: var(--blue); color: #fff; }
+.btn-primary:active { background: var(--blue-press); transform: scale(var(--press-scale)); }
+/* 暗色主按钮：白字在默认 --blue 上仅 3.28:1，改用深一档 --blue-fill（4.79:1） */
+:root[data-theme='dark'] .btn-primary { background: var(--blue-fill); }
+:root[data-theme='dark'] .btn-primary:active { background: var(--blue-fill-press); transform: scale(var(--press-scale)); }
+.btn-soft { background: var(--blue-soft); color: var(--blue); }
+.btn-danger { background: var(--danger-soft); color: var(--danger); }
+.btn-ghost { background: transparent; box-shadow: inset 0 0 0 1px var(--border-strong); }
+.btn:disabled { opacity: 0.42; pointer-events: none; }
+
+/* ── 药丸 / 图标按钮 / 卡片 ── */
+.pill {
+  display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 0 var(--sp-3);
+  border-radius: var(--r-pill); background: var(--fill-strong); color: var(--text-2);
+  font-size: var(--fs-sub); font-weight: 500; white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-press) var(--ease-out);
+}
+.pill:active { transform: scale(var(--press-scale)); }
+.pill.on { background: var(--blue-soft); color: var(--blue); }
+.pill.warn-on { background: var(--orange-soft); color: var(--orange); }
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border-radius: var(--r-md); color: var(--text-2);
+  flex-shrink: 0;
+  transition:
+    background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-press) var(--ease-out);
+}
+.icon-btn:active { background: var(--fill-strong); transform: scale(var(--press-scale)); }
+.card { background: var(--bg); border-radius: var(--r-card); box-shadow: var(--shadow-1); overflow: hidden; }
+.sec-label { font-size: var(--fs-label); color: var(--text-3); padding: 0 var(--sp-1) var(--sp-2); letter-spacing: 0.02em; }
+
+/* ── 等宽块 ── */
+.code {
+  font-family: var(--font-mono); font-size: var(--fs-label); line-height: 1.6;
+  background: var(--code-bg); color: var(--code-text); border-radius: var(--r-sm);
+  padding: 11px 13px; overflow-x: auto; white-space: pre; margin: 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ── 入场动画收窄到「时间线内追加项」──
+   页面级入场动画已整体移除（根治「界面闪」）；但流式回复中工具卡片 / 新消息
+   是逐个挂载的，完全没有过渡会「啪」地硬插进时间线（用户反馈观感差）。
+   所以只给 .cascade（消息气泡 / 工具卡片 / 工具组 / 通知条）恢复最小入场：
+   coomi-enter-append = 160ms / 2px 上浮 + 淡入，backwards（播完交还普通样式，
+   不压按压态）。.fade-in / .tab-pane 维持无动画；页面切换动画仍关闭。
+   减弱动态（prefers-reduced-motion / data-motion=off）照常降级。 */
+.cascade {
+  animation: coomi-enter-append var(--enter-append-dur) var(--ease-out) backwards;
+}
+.fade-in, .tab-pane {
+  animation: none;
+}
+
+/* ══ 按压反馈：全 app 只有这一种 ══
+   定的是「缩放 0.98」，不是背景变化 —— 理由是背景在这套界面里已经被占用了：
+   列表行按压用 --fill、选中行用 --blue-soft、危险操作用 --danger-soft，
+   背景一变化就分不清「按下去」和「选中了 / 这行是危险的」。
+   缩放只动 transform，不触发重绘，在任何底色、任何尺寸的列表行上都成立。
+
+   改动纪律：组件里不要再出现 scale(.9) / scale(.92) / scale(.97) 这类第三种手感，
+   一律写 var(--press-scale)。全仓 35 处 :active 缩放已归一到这一个值。
+   时长统一 --dur-press(80ms) + --ease-out：按压是「马上给反馈」，
+   回弹（--ease-spring）只留给一次性入场（弹层、开关拨杆）。 */
+button, [role="button"], .rt, .wall-item, .side-btn {
+  transition:
+    transform var(--dur-press) var(--ease-out), opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+button:active, [role="button"]:active, .rt:active, .wall-item:active, .side-btn:active {
+  transform: scale(var(--press-scale));
+  opacity: 0.9;
+}
+/* 列表行 / 卡片不是 <button>，靠这个类自愿加入同一套 —— 不能写成 .card:active：
+   纯展示的卡片一按就缩会变成 bug，「可点」必须显式声明。
+   已有组件的 :active 规则已就地改成 var(--press-scale)，与这里同值。 */
+.pressable {
+  transition:
+    transform var(--dur-press) var(--ease-out), background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.pressable:active { transform: scale(var(--press-scale)) !important; }
+/* 这里的 !important 不是「压样式」，是把按压态从 fill-mode 里摘出来：
+   任何一条带 forwards 的动画（抽屉、菜单、折叠面板）播完后都会一直填着它的终帧
+   transform，而**正在填充的动画在级联里排在普通声明之上** —— 没有 !important 时
+   按压缩放会被静默盖掉，手感直接失灵（静态检查查不出来，只在真机上点得到）。
+   结论：按压反馈永远写 !important，永远不要靠调 fill-mode 去迁就它。 */
+
+/* 消息入场：统一走下方「收敛的自定义 keyframes」的 msgIn 或 coomi-enter-item/append。
+   原 .msg-in / coomi-msg-in（2px 淡入）全仓无使用方（死代码），且与 coomi-cascade 逐字重复，删除。 */
+
+/* ══ 入场动效：公用类 ══
+   页面 / 区块一律套用下面这 6 个类，别再各写一套 keyframes 和时长。
+   · 全部只动 opacity 与 transform —— 不碰 width/height/margin，不触发重排；
+   · 时长/位移只取自 :root 的 --enter-* 令牌；
+   · 用 animation 而不是 transition：入场是「挂载即播一次」，不需要外部状态翻转，
+     也不会和页面自身的 :hover/:active 过渡互相覆盖。
+   外壳层（App.vue）把 .enter-page / .enter-flat 自动挂到每个路由页面上，
+   所以页面自己一行不用改就有入场。 */
+@keyframes coomi-enter-page {
+  from { opacity: 0; transform: translateY(var(--enter-page-shift)); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes coomi-enter-flat {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes coomi-enter-block {
+  from { opacity: 0; transform: translateY(var(--enter-block-shift)); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes coomi-enter-item {
+  from { opacity: 0; transform: translateY(var(--enter-item-shift)); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes coomi-enter-append {
+  from { opacity: 0; transform: translateY(var(--enter-append-shift)); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes coomi-enter-pop {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ══ 两类动效语义：--enter-* 与 --expand-* 的唯一区别就是 fill-mode ══
+   （下面这两段是全 app 的判定表。新写动画先对号入座，再写 keyframes。）
+
+   ① --enter-*：出现 / 入场 —— 一次性，播完就走
+      fill-mode: backwards。播完立刻把元素交还给普通样式。
+      判定依据（两条都要成立）：
+        a) 元素的自然样式 === 动画的终帧（终态不需要动画「撑」着）；
+        b) 元素要么被卸载（v-if 关掉），要么之后不再依赖这次动画的结果。
+      为什么不能 forwards：forwards 会让动画结束后一直「填着」最后一帧的
+      transform/opacity，而**正在填充的动画优先级高于普通声明**，
+      于是 .row:active { transform: scale(...) } 被它盖掉 —— 列表行的按压从此失灵。
+      这类问题只在真机上点一下才看得出来，静态检查完全测不到。
+      入场动画终态恒等于自然样式，所以 forwards 一点好处都没有，只有这个风险。
+      backwards 仍然必需的地方：带 animation-delay 的 .enter-item 错峰 ——
+      等待期间元素必须保持第一帧的透明态。
+
+   ② --expand-*：展开 / 收起 / 状态驻留 —— 播完必须**停在终态**
+      fill-mode: forwards。判定依据（满足其一即是）：
+        a) 终态 ≠ 元素的自然样式（收起态靠动画撑着，否则会弹回初始样式）；
+        b) 元素不卸载（class 切换 / 状态常驻），动画一结束就要继续生效；
+        c) 收起动画播完后元素才会被移除，收起过程中不能出现「回弹一帧」。
+      两个方向要各写一条 keyframes（--expand-open-* / --expand-close-*），
+      不能把同一条 keyframes 反着放：时长不同，方向也不同。
+      代价是终态 transform 会压住 :active，所以 --expand-* 的动画只挂在
+      「容器」上（面板 / 浮层 / 折叠内容），容器内部的可点元素仍然是普通声明；
+      真要同层共存，按压态写成 .pressable:active { transform: ... !important; }
+      （见下方「按压反馈」段），不要靠改 fill-mode 绕。 */
+.enter-page { animation: coomi-enter-page var(--enter-page-dur) var(--ease-out) backwards; }
+.enter-flat { animation: coomi-enter-flat var(--enter-flat-dur) var(--ease-out) backwards; }
+.enter-block { animation: coomi-enter-block var(--enter-block-dur) var(--ease-out) backwards; }
+.enter-append { animation: coomi-enter-append var(--enter-append-dur) var(--ease-out) backwards; }
+.enter-pop { animation: coomi-enter-pop var(--enter-pop-dur) var(--ease-out) backwards; }
+
+/* ── 底部弹层过渡（Transition name="sheet-pop"）──
+   以前这套类只写在 ReasoningBlock / ToolCardItem 的 scoped CSS 里，
+   于是 MessageBubble 的「查看全部」用了同一个 name 却没有任何过渡 —— 硬挂硬摘。
+   统一放到全局：遮罩 180ms 淡入、面板 240ms 上滑 + 淡入，三处共用。
+   面板选择器按各组件自己的类名补，避免误伤无关节点。 */
+.sheet-pop-enter-active { transition: opacity 200ms var(--ease-out); }
+.sheet-pop-leave-active { transition: opacity 160ms var(--ease-in); }
+.sheet-pop-enter-from, .sheet-pop-leave-to { opacity: 0; }
+.sheet-pop-enter-active .reader,
+.sheet-pop-enter-active .r-sheet,
+.sheet-pop-enter-active .tool-sheet { transition: transform 260ms cubic-bezier(.22, .68, .19, 1); }
+.sheet-pop-leave-active .reader,
+.sheet-pop-leave-active .r-sheet,
+.sheet-pop-leave-active .tool-sheet { transition: transform 180ms var(--ease-in); }
+.sheet-pop-enter-from .reader,
+.sheet-pop-leave-to .reader,
+.sheet-pop-enter-from .r-sheet,
+.sheet-pop-leave-to .r-sheet,
+.sheet-pop-enter-from .tool-sheet,
+.sheet-pop-leave-to .tool-sheet { transform: translateY(28px); }
+
+/* ══ 全仓 fill-mode 逐处判定表（2026-10-05 复核，共 66 处 CSS animation）══
+   结论：入场 65 处，展开/收起 1 处（SideDrawer 会话操作面板，已改）。
+   也就是说「把 both 批量改成 backwards 会让展开动画消失」这个判断不成立 ——
+   当时全仓**没有一条**依赖 forwards 的展开动画。真正缺的是「收起动画」本身：
+   这些浮层/面板都是 v-if 硬挂硬摘，打开有动画、关闭直接消失，
+   看上去就像「没有开合」。已在 TopBar model-menu / usage-menu、SideDrawer 会话面板、
+   MemoryView 折叠区按 --expand-* 补齐成对方向。
+   ────────────────────────────────────────────────────────────────
+   判定列只写「为什么」：
+     入场   = 终帧 === 元素自然样式，且元素要么被卸载、要么之后不再依赖这次动画。
+     展开   = 终态需要靠动画撑住 / 节点要等动画结束才被摘掉。
+   ────────────────────────────────────────────────────────────────
+   · coomi-enter-page / -flat / -block / -item / -append / -pop（.enter-* 六类，
+     另被 Composer、MemberDetail、CollabWorkspaceView、AppearanceView、PersonaView、
+     SettingsView、LifeView 直接引用）—— 入场。
+     依据：to 帧是 opacity:1 / transform:none，正好是元素的自然样式；页面由 App.vue
+     的 <Transition mode="out-in"> 换组件时重新挂载，播一次就走。
+     .enter-item 另带 animation-delay，backwards 在这里是**必需**的（延迟期保持透明）。
+   · .cascade / .fade-in / .tab-pane —— 入场。挂载即播一次，to 帧即自然样式。
+   · msgIn（MessageBubble .bubble、features/group/MessageBubble .row-msg/.sys-bubble、
+     DmView ×2、RoomChatView ×4、GroupRoomView）—— 入场。
+     依据：气泡节点随消息挂载，to = translateY(0) scale(1)。
+   · blockIn（MessageBubble .blk、TimelineBlock .q-answered、CollabWorkspaceView
+     .delivery-card/.msg、LifeView .card/.notice）—— 入场，to = translateY(0)。
+   · rise（FileInline / ModelPickerSheet / QuestionSheet / ThemeSelect / CollabView /
+     CollabWorkspaceView / HomeView / ProviderDetailView / MemoryView / SettingsView /
+     CollabCreateView / FileManagerView / TopBar path-sheet）—— 入场。
+     依据最硬的一条：rise 只写了 from 帧，to 是隐式的「元素本来的样子」，
+     且没有 animation-delay —— backwards 在这里甚至不产生任何效果，
+     换成 forwards 同样不产生任何效果。
+   · slideUp（features/group/Composer .composer、RoomChatView .composer）—— 入场。
+   · modalIn / toastIn / badgePop / life-card-in —— 入场，全部挂在 v-if 的浮层上。
+   · ui-select-pop（UiSelect，teleport 到 body）—— 入场。
+     依据：这个浮层的位置是**内联 transform** 给的，forwards 会把终帧 transform
+     钉在动画上，反而让它跳回左上角。backwards 是这里唯一正确的选择。
+   · sheet-rise（SideDrawer 会话「更多」面板）—— 原判定「入场」（to = 自然样式，
+     backwards 技术上没错），但面板是 v-if 开合的，只做出、不做收，
+     结果就是「打开有动画、关闭硬消失」= 看起来没有开合。
+     已改为 --expand-* 成对（drawer-sheet-enter/leave-active，forwards）。
+
+/* ══ 展开动效：公用类（第二类语义，forwards）══
+   四个类各管一个方向 × 两种尺度：
+     .expand-pop / .expand-pop-out  浮层型：菜单、下拉、气泡（缩放 + 淡入淡出）
+     .expand-slide / .expand-slide-out  面板型：抽屉、底部 sheet（纵向位移 + 淡入淡出）
+     .expand-fade / .expand-fade-out    遮罩型：只淡入淡出，不动 transform
+   「out」= 收起方向。收起类一律 forwards：收起播完的那一帧就是要停住的那一帧，
+   Vue <Transition> 会在动画结束后才把节点摘掉，中间任何一帧回弹都会被看见。
+   位移只取 --expand-*-shift（6~8px），不再各自写数值。 */
+@keyframes coomi-expand-pop {
+  from { opacity: 0; transform: scale(.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes coomi-expand-pop-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(.94); }
+}
+@keyframes coomi-expand-slide {
+  from { opacity: 0; transform: translateY(var(--expand-open-shift)); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes coomi-expand-slide-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(var(--expand-close-shift)); }
+}
+@keyframes coomi-expand-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes coomi-expand-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+.expand-pop { animation: coomi-expand-pop var(--expand-open-dur) var(--ease-out) forwards; }
+.expand-pop-out { animation: coomi-expand-pop-out var(--expand-close-dur) var(--ease-emphasized) forwards; }
+.expand-slide { animation: coomi-expand-slide var(--expand-open-dur) var(--ease-out) forwards; }
+.expand-slide-out { animation: coomi-expand-slide-out var(--expand-close-dur) var(--ease-emphasized) forwards; }
+/* 纯淡入淡出（遮罩 / 背板）：只动 opacity，不碰 transform，
+   所以它和同层任何 :active 缩放都能共存，不需要 !important。 */
+.expand-fade { animation: coomi-expand-fade var(--expand-open-dur) var(--ease-out) forwards; }
+.expand-fade-out { animation: coomi-expand-fade-out var(--expand-close-dur) var(--ease-emphasized) forwards; }
+
+/* 列表首批错峰（stagger）。
+   做法反过来了：:nth-child 只负责「给这一项算一个序号 --i」，
+   真正的 animation-delay 由下面唯一一条 .enter-item 用 calc 算出来。
+
+   为什么不让页面逐项写 style="--i:n"：
+     1) 页面加个类就自动有错峰，不会出现「加了 enter-item 却忘了写序号 → 整列同时出现」；
+     2) 内联 style 的优先级高于类规则，需要精确控制时仍能覆盖
+        （例如只让前 3 项错峰：style="--i:2"）；
+     3) 延迟只在一处计算，改步长（--enter-item-stagger）不用回头改页面。
+
+   为什么锁死 8 档：第 9 项起 --i 归零。长列表若一路递增，
+   整列要「爬」完 8×24ms 才停完，滚动时明显发黏。
+   跨行容器（列表行还夹着分组标题/分隔线）时 nth-child 会把中间那类也算进序号，
+   错峰幅度略大于实际项数，但上限仍是 8 档，不会拖慢。 */
+.enter-item {
+  animation: coomi-enter-item var(--enter-item-dur) var(--ease-out) backwards;
+  animation-delay: calc(min(var(--i, 0), 7) * var(--enter-item-stagger));
+}
+.enter-item:nth-child(1) { --i: 0; }
+.enter-item:nth-child(2) { --i: 1; }
+.enter-item:nth-child(3) { --i: 2; }
+.enter-item:nth-child(4) { --i: 3; }
+.enter-item:nth-child(5) { --i: 4; }
+.enter-item:nth-child(6) { --i: 5; }
+.enter-item:nth-child(7) { --i: 6; }
+.enter-item:nth-child(8) { --i: 7; }
+.enter-item:nth-child(n + 9) { --i: 0; }
+
+/* ══ 收敛的自定义 keyframes（每类只留一份定义）══
+   语义映射：msgIn / blockIn / rise / slideUp → 区块或追加档；
+   modalIn / toastIn / badgePop / ui-select-pop → 弹层档；
+   model-menu-pop / model-menu-collapse 现在挂在 --expand-* 上（开合成对），不再算入场。
+   下面这些之所以不和 coomi-enter-* 合并，是因为它们的位移本身承载了信息
+   （底部 sheet 是 100% 高度上滑、气泡带 scale），换掉就不再是「从下面来」；
+   但它们的时长与曲线已经全部取自 --enter-* / --ease-* 令牌。 */
+/* 气泡/消息入场（原 msgIn 气泡变体 ×4 + bubbleIn 合并）：语义 = enter-item（新消息/新挂载节点）。
+   带 scale + 8px 位移，与 token 的 4px 不同，故保留单一定义。 */
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(8px) scale(.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+/* rowIn（列表行横向滑入）已删除：HomeView / GroupHomeView 的行改用 .enter-item 之后
+   全仓再无调用方。它表达的是「从侧边来」，而列表是竖着铺开的，
+   竖向 4px（coomi-enter-item）才是它真正在表达的关系。 */
+/* toast 入场（右侧滑入）：语义 = enter-pop。原 20px/24px 位移用变量吸收。 */
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(var(--toast-shift, 20px)); }
+  to { opacity: 1; transform: translateX(0); }
+}
+/* 模态入场：语义 = enter-pop（浮层）。scale(.95)+8px 与 token 的 scale(.98) 不同，保留。 */
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(.95) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+/* 底部面板上滑（composer / 底部弹层）：语义 = enter-block。100% 高度滑入与 token 8px 不同，保留。 */
+@keyframes slideUp {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+/* 底部 sheet 上滑（ApprovalSheet / SessionsView）：语义 = enter-item（任务映射约定）。
+   实际为 100% 高度滑入，位移与 token 不同，保留单一定义。 */
+@keyframes rise {
+  from { transform: translateY(100%); }
+}
+/* 内容块入场 6px（原 blkIn + blockIn 合并）：语义 = enter-block。6px 与 token 8px 不同，保留。 */
+@keyframes blockIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* 「进行中」呼吸（群组在线 / 发言中）：语义 = 运行呼吸，准入测试通过，保留。
+   谷值 opacity 0.45/0.4 用 --livepulse-min 吸收，行为不变。 */
+@keyframes livePulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: var(--livepulse-min, 0.45); transform: scale(var(--livepulse-scale, 0.85)); }
+}
+/* 运行/进行中指示点脉冲（任务运行态、live 点、会话运行点）：语义 = 状态编码（进行中），保留。
+   原谷值 0.35/0.4/0.45 用 --pulse-min 吸收，行为不变。 */
+@keyframes pulse {
+  50% { opacity: var(--pulse-min, 0.45); }
+}
+
+/* ── 加载骨架 ──
+   加载态一律用骨架而不是转圈。
+   为什么按「真实布局」给形状，而不是一块通用灰条：
+   通用灰条铺出来的骨架和内容行高、缩进、留白都对不上，数据一到整列内容会往下跳一截
+   （CLS），骨架反而比没有更晃。本 app 真实出现的四种信息结构各有一组基元：
+     列表行（.sk-avatar + .sk-title + .sk-line）、卡片（+ .sk-chip）、
+     消息（.sk-bubble，含左右两种圆角）、详情行（一短标签 + 一长值）。
+   组合方式由 <UiSkeleton> 的 variant 决定，页面只写 variant，不自己拼灰块。
+   .sk 是呼吸基块，形状只能由下面这几种组合而成。 */
+@keyframes coomi-skeleton {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.sk {
+  border-radius: var(--r-sm);
+  background: var(--fill-strong);
+  animation: coomi-skeleton var(--dur-loop) var(--ease-in-out) infinite;
+}
+/* 文字行：高度取字阶行高，宽度由调用方给（长短要错开，否则像一段灰栅栏） */
+.sk-line { height: var(--lh-sub); border-radius: var(--r-pill); }
+.sk-title { height: var(--lh-strong); border-radius: var(--r-pill); }
+/* 头像 / 图标：正圆，和消息头、列表头一致 */
+.sk-avatar { flex: none; border-radius: var(--r-pill); }
+/* 药丸标签：宽度固定，模拟一行 chip */
+.sk-chip { height: 28px; width: 72px; border-radius: var(--r-pill); }
+/* 媒体块：圆角跟随卡片（--r-card），与正文卡片不撞形状 */
+.sk-block { border-radius: var(--r-md); }
+/* 气泡：真实气泡的圆角与最大宽度，撑出来才像「消息」而不是「灰条」。
+   这里只定「形状」，内边距/行距这类排布交给 <UiSkeleton> 的 scoped 样式，
+   避免同一件事在两处各写一遍、以后只改一处。 */
+.sk-bubble { max-width: 68%; border-radius: var(--r-card) var(--r-card) var(--r-sm) var(--r-card); }
+.sk-bubble.mine { margin-left: auto; border-radius: var(--r-card) var(--r-card) var(--r-card) var(--r-sm); }
+
+/* ══ 空态：全 app 同一套 ══
+   结构定死为「图标（可省）→ 标题 → 一句说明 → 一个动作（可省）」四级，
+   页面只填内容，不再各写一套字号和间距。
+   为什么不放插画：同一个插画在 10 个空页面里重复出现，
+   只会让人以为是同一件事出了 10 次；一个图标 + 一句话已经足够说明「这里是空的、为什么空」。
+
+   动效只给图标一次 enter-pop（浮层级的语义），文字不逐行入场 ——
+   空态是「立刻要知道发生了什么」，逐行淡入反而把它变成一次表演。 */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-9) var(--sp-5);
+  text-align: center;
+  animation: coomi-enter-flat var(--enter-flat-dur) var(--ease-out) backwards;
+}
+.empty-state-art {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-bottom: var(--sp-2);
+  border-radius: var(--r-pill);
+  background: var(--fill);
+  color: var(--text-3);
+  animation: coomi-enter-pop var(--enter-pop-dur) var(--ease-out) backwards;
+}
+/* 自带插画（UiEmpty 的 #art 槽）：去掉灰圆底与固定尺寸，尺寸交给插画自己决定。 */
+.empty-state-art--bare {
+  width: auto;
+  height: auto;
+  background: none;
+  border-radius: 0;
+  color: var(--blue);
+}
+.empty-state-title {
+  margin: 0;
+  font-size: var(--fs-strong);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-strong);
+  color: var(--text);
+}
+.empty-state-desc {
+  margin: 0;
+  max-width: 268px;
+  font-size: var(--fs-sub);
+  line-height: var(--lh-sub);
+  color: var(--text-3);
+}
+.empty-state-action { margin-top: var(--sp-3); }
+
+/* 行内空态：区块内部只有一句话，没有标题也没有动作。
+   和 .empty-state 的区别只是「占一整页」还是「占一个区块」，不要在这两者间再分叉字号。 */
+.empty-sm {
+  padding: var(--sp-6) var(--sp-3);
+  text-align: center;
+  font-size: var(--fs-sub);
+  line-height: var(--lh-sub);
+  color: var(--text-3);
+}
+/* 空态里带错误信息的：引擎错误、读取失败等。 */
+.empty-sm.err, .empty-sm.error { color: var(--danger); }
+
+/* ── 减弱动态效果：所有新增动效一律降级 ──
+   两个入口都要认：
+   · 系统级 prefers-reduced-motion: reduce；
+   · 应用内「减弱动态效果」开关 —— 原生/设置页给 <html> 写 data-motion="off"。
+   两者都要求「位移归零」，所以入场类直接 animation:none，只留最终态。
+   （组件内联的动画只认 media query，不认 data-motion，属于各自组件的范围。） */
+@media (prefers-reduced-motion: reduce) {
+  .cascade, .fade-in, .tab-pane,
+  .sk, .shimmer-text, .stream-caret { animation: none !important; }
+  .cascade, .fade-in { opacity: 1; transform: none; }
+  /* 入场一律不出动画：位移归零，元素直接以最终态出现 */
+  .enter-page, .enter-flat, .enter-block,
+  .enter-item, .enter-append, .enter-pop {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+  }
+  /* 空态与按压态同样降级：空态直接出现，按压不再缩放（缩放也是位移的一种） */
+  .empty-state, .empty-state-art { animation: none !important; }
+  .pressable:active, button:active, [role="button"]:active { transform: none; }
+  /* 底部弹层：直接出现/消失，不留位移 */
+  .sheet-pop-enter-active, .sheet-pop-leave-active,
+  .sheet-pop-enter-active .reader, .sheet-pop-leave-active .reader,
+  .sheet-pop-enter-active .r-sheet, .sheet-pop-leave-active .r-sheet,
+  .sheet-pop-enter-active .tool-sheet, .sheet-pop-leave-active .tool-sheet { transition: none !important; }
+  .sheet-pop-enter-from .reader, .sheet-pop-leave-to .reader,
+  .sheet-pop-enter-from .r-sheet, .sheet-pop-leave-to .r-sheet,
+  .sheet-pop-enter-from .tool-sheet, .sheet-pop-leave-to .tool-sheet { transform: none; }
+  /* 展开类（第二类语义）同样降级。这里必须同时把 opacity/transform 写死成终态：
+     展开类用的是 forwards，去掉 animation 后若不留终态，收起方向会停在「打开」那一帧，
+     面板就永远收不回去了 —— 这是 forwards 类动画特有的坑。 */
+  .expand-pop, .expand-slide { animation: none !important; opacity: 1; transform: none; }
+  .expand-pop-out, .expand-slide-out { animation: none !important; opacity: 0; transform: none; }
+}
+/* 应用内开关：与上面的媒体查询保持同一套声明（改一处时记得两处一起改） */
+[data-motion='off'] .cascade, [data-motion='off'] .fade-in,
+[data-motion='off'] .tab-pane, [data-motion='off'] .sk,
+[data-motion='off'] .shimmer-text, [data-motion='off'] .stream-caret { animation: none !important; }
+[data-motion='off'] .cascade, [data-motion='off'] .fade-in {
+  opacity: 1;
+  transform: none;
+}
+[data-motion='off'] .enter-page, [data-motion='off'] .enter-flat, [data-motion='off'] .enter-block,
+[data-motion='off'] .enter-item, [data-motion='off'] .enter-append, [data-motion='off'] .enter-pop {
+  animation: none !important;
+  opacity: 1;
+  transform: none;
+}
+[data-motion='off'] .expand-pop, [data-motion='off'] .expand-slide { animation: none !important; opacity: 1; transform: none; }
+[data-motion='off'] .expand-pop-out, [data-motion='off'] .expand-slide-out { animation: none !important; opacity: 0; transform: none; }
+[data-motion='off'] .empty-state, [data-motion='off'] .empty-state-art { animation: none !important; }
+[data-motion='off'] .pressable:active, [data-motion='off'] button:active,
+[data-motion='off'] [role="button"]:active { transform: none; }
+[data-motion='off'] .sheet-pop-enter-active, [data-motion='off'] .sheet-pop-leave-active,
+[data-motion='off'] .sheet-pop-enter-active .reader, [data-motion='off'] .sheet-pop-leave-active .reader,
+[data-motion='off'] .sheet-pop-enter-active .r-sheet, [data-motion='off'] .sheet-pop-leave-active .r-sheet,
+[data-motion='off'] .sheet-pop-enter-active .tool-sheet, [data-motion='off'] .sheet-pop-leave-active .tool-sheet { transition: none !important; }
+[data-motion='off'] .sheet-pop-enter-from .reader, [data-motion='off'] .sheet-pop-leave-to .reader,
+[data-motion='off'] .sheet-pop-enter-from .r-sheet, [data-motion='off'] .sheet-pop-leave-to .r-sheet,
+[data-motion='off'] .sheet-pop-enter-from .tool-sheet, [data-motion='off'] .sheet-pop-leave-to .tool-sheet { transform: none; }
+
+/* 侧滑面板过渡增强 */
+.side {
+  transition: transform var(--dur-slow) var(--ease-out);
+  will-change: transform;
+}
+.mask {
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+/* ══ 循环动画：一律「命名状态」才允许存在 ══
+   这一段里 100% 是 linear / step-end，因为旋转与扫光的可读性来自「匀速」，
+   换成缓动反而会一顿一顿 —— 唯一的例外是呼吸类，用 --ease-in-out。 */
+@keyframes coomi-spin { to { transform: rotate(360deg); } }
+@keyframes coomi-shimmer { to { background-position: 200% 0; } }
+/* 运行中指示统一走「呼吸」：透明度起伏，不再有高速扫光/脉冲。 */
+@keyframes coomi-breathe {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+/* 流式“正在写”光标：step-end 让它像终端光标而不是渐隐 */
+@keyframes coomi-blink { 50% { opacity: 0; } }
+
+/* 流式文本的"正在写"光标 */
+.stream-caret {
+  display: inline-block; width: 7px; height: 1.02em; margin-left: 3px;
+  background: var(--blue); border-radius: 1.5px; vertical-align: text-bottom;
+  animation: coomi-blink var(--dur-loop) step-end infinite;
+}
+
+/* 未定案文字的流光遮罩（推理 ticker / 运行中的工具名） */
+.shimmer-text {
+  background: linear-gradient(90deg, var(--text-3) 20%, var(--blue) 45%, var(--text-3) 70%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: coomi-shimmer var(--dur-loop) linear infinite;
+}
+
+/* ── Markdown 正文 ── */
+.md { font-size: var(--fs-body-lg); line-height: 1.72; word-break: break-word; }
+.md :first-child { margin-top: 0; }
+.md :last-child { margin-bottom: 0; }
+.md p { margin: 0.55em 0; }
+.md pre {
+  margin: 0.7em 0; background: var(--code-bg); border-radius: var(--r-md);
+  overflow: hidden; box-shadow: inset 0 0 0 1px var(--border);
+}
+.md code {
+  font-family: var(--font-mono); font-size: 0.87em;
+  background: var(--fill-strong); color: var(--code-text);
+  padding: 1.5px 6px; border-radius: var(--r-sm);
+}
+.md pre code {
+  display: block; padding: 13px 14px; overflow-x: auto; white-space: pre;
+  background: none; font-size: var(--fs-label); line-height: 1.62;
+  -webkit-overflow-scrolling: touch;
+}
+.md ul, .md ol { margin: 0.55em 0; padding-left: 1.3em; }
+.md li { margin: 0.24em 0; }
+.md li::marker { color: var(--text-3); }
+.md h1, .md h2, .md h3 { font-size: 1.06em; font-weight: 600; margin: 0.85em 0 0.4em; }
+.md a { color: var(--blue); text-decoration: underline; text-underline-offset: 2px; }
+.md strong { font-weight: 600; }
+/* 正文配图：宽度跟着版心，高度封顶，点击可在 FileInline 里全屏看。 */
+.md img {
+  display: block;
+  max-width: 100%;
+  max-height: 60vh;
+  margin: 0.7em auto;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  object-fit: contain;
+  background: var(--fill);
+}
+/* 图挂了不能留一块白板：把替代文字显出来，至少能看出是哪张图。 */
+.md img:not([src]),
+.md img[src=""] { display: none; }
+
+.md blockquote {
+  margin: 0.7em 0; padding: 2px 0 2px var(--sp-3);
+  border-left: 2px solid var(--blue-border); color: var(--text-2);
+}
+.md hr { border: none; border-top: 1px solid var(--border); margin: 1.1em 0; }
+
+/* 代码块卡片化：语言名 + 复制/运行工具条（按钮由 MessageBubble 事件代理接管）。
+ *
+ * 不用 overflow:hidden 做圆角裁切 —— 那会创建层叠上下文，让代码块能盖住
+ * 输入区浮层（功能托盘的 pill 就被它挡过）。改成让子元素各自贴合圆角，
+ * 视觉一样但不产生层级副作用，顺带减少一层裁剪对滚动的影响。 */
+.md .md-code {
+  margin: 0.7em 0; border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--code-bg);
+}
+.md-code-bar {
+  display: flex; align-items: center; gap: var(--sp-1);
+  padding: 3px var(--sp-2) 3px var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  border-radius: 12px 12px 0 0;
+}
+.md-code-lang {
+  margin-right: auto; font-family: var(--font-mono);
+  font-size: var(--fs-caption); color: var(--text-3); text-transform: lowercase;
+}
+.md .md-code pre {
+  margin: 0; border-radius: 0 0 12px 12px; box-shadow: none; background: transparent;
+}
+
+/* 表格：卡片化（工具条 + 横向滚动），不再是裸露的方格。
+   与代码块同理：不用 overflow:hidden 裁圆角，避免创建层叠上下文盖住输入区浮层。 */
+.md .md-table {
+  margin: 0.7em 0; border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--bg);
+}
+.md-table-bar {
+  display: flex; align-items: center; gap: var(--sp-1); padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid var(--border); background: transparent;
+  border-radius: 12px 12px 0 0;
+}
+.md-table-bar::before {
+  content: '表格'; margin-right: auto;
+  font-size: var(--fs-caption); font-weight: 600; color: var(--text-3);
+}
+.md-table-btn {
+  display: grid; place-items: center;
+  width: 28px; height: 28px; padding: 0;
+  border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-3);
+}
+.md-table-btn:hover { background: var(--fill); color: var(--text); }
+.md-table-btn.done { color: var(--green, #197e56); }
+.md-table-btn:active { background: var(--fill-press); }
+.md-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.md .md-table table { width: 100%; border-collapse: collapse; font-size: var(--fs-sub); margin: 0; }
+.md .md-table th, .md .md-table td {
+  border: 0; border-bottom: 1px solid var(--border);
+  padding: var(--sp-2); text-align: left; white-space: nowrap;
+}
+.md .md-table th { background: transparent; font-weight: 600; color: var(--text-2); font-size: var(--fs-caption); }
+.md .md-table tr:last-child td { border-bottom: 0; }
+/* 兜底：万一有未包卡片的表格，仍然可横向滚动。 */
+.md > table { width: 100%; border-collapse: collapse; font-size: var(--fs-sub); display: block; overflow-x: auto; }
+
+/* 表格全屏查看 */
+.md-table-full {
+  position: fixed; inset: 0; z-index: var(--z-overlay-2);
+  display: flex; align-items: center; justify-content: center; padding: var(--sp-4);
+  background: rgb(0 0 0 / .45);
+}
+.md-table-full-card {
+  width: 100%; max-height: 86vh; display: flex; flex-direction: column;
+  border-radius: var(--r-card); background: var(--bg); overflow: hidden; box-shadow: var(--shadow-2);
+}
+.md-table-full-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sub); font-weight: 600;
+}
+.md-table-full-body { padding: var(--sp-2) var(--sp-3) var(--sp-3); overflow: auto; }
+.md-table-full-body table { width: 100%; border-collapse: collapse; font-size: var(--fs-sub); }
+.md-table-full-body th, .md-table-full-body td { border: 1px solid var(--border); padding: var(--sp-2); text-align: left; }
+
+/* ══ 连接条与抽屉的避让 ══
+   ConnectionBanner 是 fixed 的 28px 细条（safe-top 另算），层级 --z-header=20。
+   抽屉不能靠 z-index 反超：coomi-drawer.css 用 `z-index: auto !important` 锁住
+   .drawer-root，才能让对话卡片（.shell z=1）盖住面板、做出 DeepSeek 的「盖子滑开」。
+   层级赢不了，就让面板整体下移 28px —— 抽屉顶部的本地/云端切换正好落在条下面，
+   不会被压住；条收起（v-if 摘掉）时规则自然失效，面板回到顶。 */
+
+/* ── 键盘跟随：transform 路径（新壳） ─────────────────────────────────────
+   原生不再按帧改 WebView 高度（那会整页重排），只推 --kb-inset。
+   底部整组（输入栏 / 状态条 / 循环进度 / 重试卡）用 translate3d 抬起，
+   由合成器完成；消息区只扩一段底部滚动范围，内容不会被键盘盖住。
+   老壳没有 html[data-ime] 这个标记，下面规则完全不生效。 */
+html[data-ime='transform'] .composer,
+html[data-ime='transform'] .sbar,
+html[data-ime='transform'] .loop,
+html[data-ime='transform'] .retry-confirm {
+  transform: translate3d(0, calc(-1 * var(--kb-inset, 0px)), 0);
+}
+/* 抬起的高度由 transform 负责，输入栏自身不能再把键盘高度算进 padding。 */
+html[data-ime='transform'] .composer {
+  padding-bottom: calc(var(--sp-3) + var(--safe-bottom));
+  transition: none;
+}
+html[data-ime='transform'] .chat .stream {
+  padding-bottom: var(--kb-inset, 0px);
+}
+/* 空态层是绝对铺满的：键盘弹起时把底边收回来，否则标语会被抬起来的输入栏压住。 */
+html[data-ime='transform'] .chat .empty-center {
+  bottom: var(--kb-inset, 0px);
+}
+/* will-change 只跟着一次键盘动画存在（keyboardInset.ts 320ms 后摘掉）。 */
+html[data-ime-anim] .composer,
+html[data-ime-anim] .sbar,
+html[data-ime-anim] .loop,
+html[data-ime-anim] .retry-confirm {
+  will-change: transform;
+}

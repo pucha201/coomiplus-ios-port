@@ -1,0 +1,28 @@
+{
+  "name": "coomi-web",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "type-check": "vue-tsc --noEmit",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "node --test tests/marketSearch.test.ts tests/chatTimeline.test.ts tests/collabMapper.test.ts tests/styleTokens.test.mjs tests/streamReveal.test.ts tests/retryPhase.test.ts tests/pairing.test.ts tests/connectionContext.test.ts tests/hydration.test.ts tests/sendGuard.test.ts tests/deviceRecords.test.ts tests/providerGate.test.ts tests/transportAttribution.test.ts tests/brokerConfig.test.ts tests/hostPresence.test.ts tests/configPrompt.test.ts tests/modelOwner.test.ts tests/pairingCountdown.test.ts tests/textScaleGuard.test.mjs tests/deviceDiscovery.test.ts tests/drawerFirstFrame.test.ts tests/frontendAudit.test.ts tests/reverseMode.test.ts tests/holdGesture.test.ts tests/uiBatch.test.mjs tests/uiPerfTiming.test.mjs tests/planPrefix.test.ts tests/markdownImage.test.ts tests/sessionWorkspace.test.ts tests/filePaths.test.ts tests/uiRegression.test.ts tests/bottomHandoff.test.ts && vitest run tests/modePersistence.test.ts tests/deviceEndpointHeal.test.ts tests/cloudSwitchReset.test.ts tests/p2pHttp.test.ts tests/remoteFallback.test.ts tests/relayPayloadFanout.test.ts tests/relayLiveness.test.ts tests/remoteRelayPersistence.test.ts tests/cloudHttpIsolation.test.ts tests/cloudSessionIsolation.test.ts tests/connectionAttribution.test.ts tests/sessionListStability.test.ts tests/providerKnowledge.test.ts tests/hostProbe.test.ts"
+  },
+  "dependencies": {
+    "marked": "^12.0.2",
+    "pinia": "^2.1.7",
+    "vue": "^3.4.21",
+    "vue-router": "^4.3.0",
+    "vue-virtual-scroller": "^2.0.0-beta.8"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.8",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.4.5",
+    "vite": "^8.2.2",
+    "vitest": "^4.0.18",
+    "vue-tsc": "^2.0.11"
+  }
+}

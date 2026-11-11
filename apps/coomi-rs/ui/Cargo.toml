@@ -1,0 +1,69 @@
+[package]
+name = "coomi-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+default-run = "coomi"
+
+[lib]
+name = "coomi_ui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "coomi"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[features]
+# 默认开启 iroh 隧道：桌面 / Android 沿用原有 P2P 直连能力。
+default = ["iroh-tunnel"]
+# iroh = QUIC 隧道（依赖 ring / TLS 栈）。
+# 移植到受限环境时必须能关掉：
+#   · iSH（iOS）是 i686 用户态模拟，ring 的 C/asm 依赖在交叉编译与低性能模拟下
+#     既难构建也拖慢启动；
+#   · 这条链路只是「多一条更快的直连路径」，关掉后仍可用局域网直连与中转。
+# 编译期关闭：cargo build --no-default-features
+# 运行期仍保留原来的 COOMI_DISABLE_IROH=1 开关（两者独立）。
+iroh-tunnel = ["dep:iroh"]
+
+[dependencies]
+local-ip-address = "0.6"
+anyhow.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+base64 = "0.22"
+clap.workspace = true
+coomi-catalogs = { path = "../catalogs" }
+coomi-engine = { path = "../engine" }
+coomi-security = { path = "../security" }
+coomi-services = { path = "../services" }
+coomi-telemetry = { path = "../telemetry" }
+coomi-tools = { path = "../tools" }
+flate2.workspace = true
+tar.workspace = true
+chrono.workspace = true
+crossterm.workspace = true
+dirs.workspace = true
+fs2.workspace = true
+futures-util.workspace = true
+# 可选依赖：见 [features] iroh-tunnel。
+iroh = { workspace = true, optional = true }
+md5.workspace = true
+ratatui.workspace = true
+pulldown-cmark.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+unicode-width.workspace = true
+uuid.workspace = true
+zip.workspace = true
+croner = "2"
+
+[dev-dependencies]
+chrono.workspace = true
+tempfile.workspace = true

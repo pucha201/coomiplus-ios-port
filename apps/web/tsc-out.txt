@@ -1,0 +1,4 @@
+
+> coomi-web@0.2.0 type-check
+> vue-tsc --noEmit
+

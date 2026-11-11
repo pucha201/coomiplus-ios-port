@@ -1,0 +1,71 @@
+/* =========================================================================
+ * CoomiPlus 侧边栏补丁：DeepSeek 风格「盖子滑开」（v2）
+ * 追加在 ChatView 的 CSS chunk 末尾。
+ *
+ * 为什么用 CSS 变量：原规则 .shell.pushed 带 !important，内联 style 压不过它，
+ * 所以逐帧值统一走 --cp-f（0~1 进度）/ --cp-w（抽屉宽），由 JS 写在 :root 上。
+ *
+ * 模型（与 deepseek.apk 反编译一致）：
+ *   ① 抽屉面板  translateX = (f-1)·W，scale = 0.95 + 0.05f
+ *   ② 对话页    translateX = f·W      ← 「盖子滑开」，左缘圆角 + 双层阴影
+ *   ③ 遮罩      透明（DeepSeek 浅色态 veil 取容器色，叠白底不可见）
+ * ========================================================================= */
+
+/* ---------- 层级：让对话页浮在抽屉面板之上，盖子边缘的圆角/阴影才看得见 ---------- */
+.drawer-root { z-index: auto !important; }
+.chat > .shell { position: relative; z-index: 1; }
+
+/* ---------- ② 对话页（盖子）：位移 ----------
+ * 注意：必须常驻在 .shell 上（不能挂 .pushed）。
+ * 关闭瞬间 App 会立刻摘掉 .pushed，若规则挂在 .pushed 上，
+ * 内容页会从 W 直接跳回 0，表现为「收回没动画」。
+ * 位移由 JS 内联 transform 逐帧驱动（性能更好）；这里只留一条等价兜底规则。
+ * 圆角/阴影已移到 compat-rc104.css，用「开关态 + 140ms 过渡」代替逐帧 calc
+ * （逐帧算圆角 + 40px 模糊阴影是展开卡顿的主因）。 */
+.chat > .shell {
+  transition: none !important;
+  transform: translateX(calc(var(--cp-f, 0) * var(--cp-w, 326px))) !important;
+}
+.chat > .shell.pushed { overflow: hidden !important; }
+
+/* ---------- ① 抽屉面板：宽度对齐 DeepSeek min(326dp, 80%)，自身缩放 ---------- */
+.drawer-root .panel {
+  width: min(326px, 80vw) !important;
+  max-width: none !important;
+  transition: none !important;
+
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  transform:
+    translate3d(calc((var(--cp-f, 0) - 1) * var(--cp-w, 326px)), 0, 0)
+    scale(calc(0.95 + 0.05 * var(--cp-f, 0))) !important;
+  transform-origin: 50% 50%;
+}
+
+/* ---------- ③ 遮罩：透明，仅保留点击关闭能力（由 JS 的 tap 层接管） ---------- */
+.drawer-root .scrim {
+  background: transparent !important;
+  transition: none !important;
+}
+
+/* ---------- 点击关闭层：只覆盖抽屉右侧露出的对话页区域 ---------- */
+.coomi-drawer-tap {
+  position: fixed;
+  inset: 0 0 0 var(--cp-w, 326px);
+  z-index: 9998;
+  display: none;
+}
+.coomi-drawer-tap.on { display: block; }
+
+/* ---------- 深色主题：阴影加重（同样常驻，随 --cp-f 淡入淡出） ---------- */
+:root[data-theme="dark"] .chat > .shell,
+body[data-theme="dark"] .chat > .shell,
+:root[data-theme="dark"] .shell,
+body[data-theme="dark"] .shell {
+  box-shadow:
+    -4px 2px 8px rgb(0 0 0 / calc(var(--cp-f, 0) * 0.45)),
+    -4px 2px 40px rgb(0 0 0 / calc(var(--cp-f, 0) * 0.45)) !important;
+}
+
+/* ---------- 主内容右移时不产生横向滚动 ---------- */
+.chat { overflow-x: clip; }

@@ -1,0 +1,91 @@
+/* rc104 兼容层 */
+/* 会话菜单用 rc33 弹层，层级要压过 chat */
+.cm-sheet-root { z-index: calc(var(--z-modal) + 10) !important; }
+
+/* 平板两栏：panel 在子组件里，scoped 选择器够不到，放全局 */
+.chat.tablet > .drawer-root .panel {
+  position: static !important; width: 100% !important; max-width: none !important;
+  height: 100%; transform: none !important; scale: 1 !important;
+  border-radius: 0 !important; box-shadow: none !important;
+}
+
+/* 关闭态隐藏抽屉根节点：避免路由切换/合成层残影把侧栏文字漏到对话页左侧（卡片收回 340ms 后再隐藏） */
+.chat > .drawer-root { visibility: hidden; transition: visibility 0s linear .36s; }
+.chat.drawer-open > .drawer-root,
+.chat.drawer-live > .drawer-root { visibility: visible; transition-delay: 0s; }
+
+/* 抽屉面板是静止底图（不跑 rc33 的逐帧 JS）：打开态或手势拖动中才复位位移与显隐，
+   关闭态保持 -100% 屏外，避免面板文字叠在对话页上。
+   宽度与 .shell 的位移共用 --drawer-w，滑开后严丝合缝。 */
+.chat:not(.tablet).drawer-open > .drawer-root .panel,
+.chat:not(.tablet).drawer-live > .drawer-root .panel {
+  width: var(--drawer-w) !important;
+  max-width: none !important;
+  transform: none !important;
+  visibility: visible !important;
+}
+.chat > .drawer-root .scrim { display: none; }
+
+/* ── 盖子本体：必须自己带不透明背景，否则位移时透出下层（缺陷：被推走的对话页背景透明） ──
+ * 页面底色/背景图原本画在父级 .chat 上（不位移），这里把同一套合成背景搬到 .shell。
+ * overflow: clip —— 让圆角真正生效，同时不把 .shell 变成滚动容器（hidden 会，影响 fixed 子元素）。
+ *
+ * 注意 !important：路由 chunk 的 CSS（ChatView-*.css）是懒加载的，会在本文件注入之后才进 head，
+ * 里面 `.shell[data-v-xxx]{ background: ... }` 与我们同特异性却能反压 —— 加 !important 才稳。 */
+.chat > .shell {
+  background-color: var(--bg) !important;
+  background-image:
+    linear-gradient(var(--chat-background-overlay), var(--chat-background-overlay)),
+    var(--chat-background-image) !important;
+  background-position: center !important;
+  background-size: cover !important;
+  overflow: clip;
+  /* 圆角/阴影只跟开关态，不逐帧计算（缺陷：逐帧 calc + 40px 模糊阴影 = 展开卡顿）。
+     transition 交给 ChatView 的 scoped .shell：这里再写一条会把它整条覆盖掉，
+     transform 就失去过渡 —— 正是「滑开没动画」的成因。 */
+  border-radius: 0;
+  box-shadow: none;
+}
+.chat[data-lid] > .shell {
+  border-radius: 36px 0 0 36px;   /* 左侧两角（上 + 下）都圆 */
+  box-shadow:
+    -4px 2px 8px rgb(17 22 31 / .10),
+    -4px 2px 40px rgb(17 22 31 / .10);
+}
+:root[data-theme="dark"] .chat[data-lid] > .shell,
+body[data-theme="dark"] .chat[data-lid] > .shell {
+  box-shadow:
+    -4px 2px 8px rgb(0 0 0 / .45),
+    -4px 2px 40px rgb(0 0 0 / .45);
+}
+
+/* 输入栏底色彩晕交给 .shell 的 clip 裁切，不再用 clip-path 硬切直角
+ * （原做法会把左下圆角一起切成直角，正是"上圆下方"的成因之一） */
+.chat.drawer-open .composer { clip-path: none; }
+
+/* 顶栏不再在预热帧切换模糊。
+ *
+ * 以前的做法：只在 .drawer-live 期间把 backdrop-filter 关掉、换成半透明底，
+ * 松手后（.drawer-live 摘掉）毛玻璃再回来。问题是这个切换本身发生在动画第 0 帧 ——
+ * 一边给 .shell 挂 will-change 提合成层，一边把整条顶栏的合成属性换掉，
+ * WebView 会在那一帧重新分层并整屏重绘，肉眼就是「滑开时闪一下」。
+ *
+ * 现在改成全程静态半透明底 + 不做 backdrop-filter：
+ *  - 不做模糊 → 动画期间没有「每帧重新采样整条顶栏」这笔最贵的开销；
+ *  - 底色固定不变 → 预热帧与落定帧完全一致，没有任何属性切换。
+ * 代价是顶栏没有毛玻璃质感，但省下来的正是那个闪烁。 */
+.chat .topbar {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  background: color-mix(in srgb, var(--bg) 92%, transparent) !important;
+}
+
+/* ── 输入栏浮层打开时，聊天区悬浮控件（右下角历史转盘圆钮）自动让位 ──
+ * 圆钮是 fixed + z-index 80（body 级），输入栏面板在 .shell（z 1）里，
+ * 靠调 z 值永远比不过；用「打开时淡出 + 不接收事件」解决（缺陷 11）。 */
+body.cm-panel-open .hist-fab,
+body.cm-panel-open .hist-mask {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 120ms var(--ease-out);
+}
