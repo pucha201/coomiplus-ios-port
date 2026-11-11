@@ -222,9 +222,9 @@ final class ISHBridge {
                 ishtool_extract_tar(archivePtr, rootPtr)
             }
         }
-        let ok = errnoCode == 0
+        let extractOK = errnoCode == 0
         try? fm.removeItem(at: linuxArchive)
-        if ok == 0 {
+        if !extractOK {
             return "解包 rootfs 失败（iSH tar 返回 errno=\(errnoCode)）"
         }
         // 标记完成：下次直接跳过。
