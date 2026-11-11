@@ -213,11 +213,19 @@ final class ISHBridge {
         }
         let guestArchive = Self.guestPath(for: linuxArchive)
         let guestRoot = Self.guestPath(for: linuxRootURL)
-        var errorCode: Int32 = 0
-        let ok = ishtool_extract_tar(guestArchive, guestRoot, &errorCode)
+        // C 函数要 UnsafePointer<CChar>，Swift String 先转 C 字符串；
+        // errorCode 必须**在闭包外declare、在闭包内只读**——
+        // 嵌套闭包里对 inout 取址会被 Swift 拒绝（"escaping closure captures inout"）。
+        // 所以让 C 返回 errno，而不是通过指针回写。
+        let errnoCode: Int32 = guestArchive.withCString { archivePtr in
+            guestRoot.withCString { rootPtr in
+                ishtool_extract_tar(archivePtr, rootPtr)
+            }
+        }
+        let ok = errnoCode == 0
         try? fm.removeItem(at: linuxArchive)
         if ok == 0 {
-            return "解包 rootfs 失败（iSH tar 返回 errno=\(errorCode)）"
+            return "解包 rootfs 失败（iSH tar 返回 errno=\(errnoCode)）"
         }
         // 标记完成：下次直接跳过。
         FileManager.default.createFile(atPath: marker.path, contents: Data())
@@ -307,8 +315,7 @@ private func ish_kill_task(_ task: UnsafeMutableRawPointer, _ signal: Int32)
 @_silgen_name("ishtool_extract_tar")
 private func ishtool_extract_tar(
     _ archive: UnsafePointer<CChar>,
-    _ destination: UnsafePointer<CChar>,
-    _ errorOut: UnsafeMutablePointer<Int32>
+    _ destination: UnsafePointer<CChar>
 ) -> Int32
 
 /// iSH C 接口的共享声明。
