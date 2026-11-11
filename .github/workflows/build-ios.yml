@@ -145,6 +145,17 @@ jobs:
           chmod +x apps/ios/CoomiApp/Resources/coomi
           ls -la apps/ios/CoomiApp/Resources
 
+      - name: 构建前端并放入 Resources
+        # WebF 壳加载的是打进 App 的前端产物，CI 里必须先构建出来。
+        run: |
+          cd apps/web
+          npm ci --prefer-offline --no-audit --no-fund
+          npx vite build
+          ls -la dist | head -10
+          mkdir -p ../ios/CoomiApp/Resources/web
+          cp -R dist/. ../ios/CoomiApp/Resources/web/
+          echo "前端文件数: $(find ../ios/CoomiApp/Resources/web -type f | wc -l)"
+
       - name: 安装 XcodeGen
         run: brew install xcodegen
 

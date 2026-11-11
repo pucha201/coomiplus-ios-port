@@ -32,7 +32,16 @@ targets:
     platform: iOS
     sources:
       - path: CoomiApp/Sources
+      # 资源必须显式指定 buildPhase: resources。
+      # 只写 path 时 XcodeGen 归到 sources 阶段，
+      # 无扩展名的 `coomi`（i686 ELF）和 `web/` 目录都不会进 bundle ——
+      # 实测 IPA 里只有裸二进制、没有前端与引擎。
       - path: CoomiApp/Resources
+        buildPhase: resources
+        optional: true
+      # 引擎二进制没有扩展名，单独声明一次更保险。
+      - path: CoomiApp/Resources/coomi
+        buildPhase: resources
         optional: true
     settings:
       base:
