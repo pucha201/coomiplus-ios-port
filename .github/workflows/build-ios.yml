@@ -75,7 +75,7 @@ jobs:
   ish:
     name: ish static lib
     if: ${{ inputs.build_ish == true }}
-    runs-on: macos-14
+    runs-on: macos-15
     # iSH 全量编译约 10-20 分钟；设上限便于失败快速暴露。
     timeout-minutes: 60
     steps:
@@ -126,7 +126,7 @@ jobs:
   # ───────────────── 3. 我们的 App ─────────────────
   app:
     name: build CoomiIOS.app
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 40
     needs: [engine]
     # 关键：不要因为同批其它 job（如回归测试）失败就取消这个 job。
