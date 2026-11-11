@@ -152,21 +152,41 @@ jobs:
         run: cd apps/ios && xcodegen generate
 
       - name: 编译
+        # 不要用 `xcodebuild | tail`：管道退出码取的是 tail，
+        # xcodebuild 失败会被吞成成功，后面打包步骤再报一个无关的错。
+        # 这里先落日志、单独判退出码，失败时打末尾 120 行进日志。
         run: |
+          set -o pipefail
           cd apps/ios
           xcodebuild -project CoomiIOS.xcodeproj -scheme CoomiIOS \
             -configuration Release -sdk iphoneos -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build 2>&1 | tail -80
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            build > xcodebuild.log 2>&1
+          status=$?
+          tail -120 xcodebuild.log
+          if [ $status -ne 0 ]; then
+            echo "::error::xcodebuild 失败（exit $status）"
+            exit $status
+          fi
 
       - name: 打包 ipa
         run: |
+          set -euo pipefail
           cd apps/ios
-          APP=$(find build -name "CoomiIOS.app" -maxdepth 6 | head -1)
+          APP=$(find build -name "CoomiIOS.app" -maxdepth 8 | head -1)
+          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+            echo "::error::找不到 CoomiIOS.app —— 编译步骤没产出产物"
+            find build -maxdepth 4 -type d 2>/dev/null | head -40 || true
+            exit 1
+          fi
           echo "app: $APP"
           mkdir -p out/Payload
+          rm -rf out/Payload/CoomiIOS.app
           cp -R "$APP" out/Payload/
-          cd out && zip -qry CoomiIOS-unsigned.ipa Payload
-          ls -la
+          # 未签名 ipa 只是 zip 结构：Payload/<App>.app
+          ( cd out && rm -f CoomiIOS-unsigned.ipa && zip -qry CoomiIOS-unsigned.ipa Payload )
+          ls -la out/
+          unzip -l out/CoomiIOS-unsigned.ipa | head -20
 
       - uses: actions/upload-artifact@v4
         with:
