@@ -1,0 +1,34 @@
+# 换行符规则 —— 别删，删了 bash 脚本在 CI 里会以
+# "/bin/bash^M: bad interpreter" 失败。
+#
+# 背景：这个仓库在 Windows 上开发，`core.autocrlf=true`。
+# 没有下面这条规则时，`.sh` 提交进去是 CRLF，
+# Linux runner 上 shebang 变成 "#!/usr/bin/env bash\r"，
+# 内核找不到叫 "bash\r" 的解释器。
+#
+# 注意：不是在修一个假想问题 —— rootfs 构建脚本第一次提交时就
+# 触发了 "LF will be replaced by CRLF" 警告，只是当时还没跑起来。
+
+* text=auto
+
+# shell 脚本必须 LF
+*.sh            text eol=lf
+*.bash          text eol=lf
+*.zsh           text eol=lf
+
+# 让 git 不把二进制当文本处理
+*.tar.gz        binary
+*.tar           binary
+*.zip           binary
+*.ipa           binary
+*.a             binary
+*.so            binary
+*.onnx          binary
+*.png           binary
+*.jpg           binary
+*.pdf           binary
+
+# 这些文件在 Windows 上也应该是 LF：
+# .gitignore / .gitattributes 里混入 CRLF 会让规则匹配不到
+.gitignore      text eol=lf
+.gitattributes  text eol=lf

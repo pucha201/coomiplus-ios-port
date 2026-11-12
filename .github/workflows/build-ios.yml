@@ -219,30 +219,36 @@ jobs:
 
       - name: 准备 iSH rootfs（Alpine aarch64）
         # iSH 需要一个 Linux 用户态才能跑 sh/git/python —— 引擎本身不需要它。
-        # 这里只做「有就打包、没有就跳过」：rootfs 缺失时 App 仍能启动并对话，
-        # 只是 AI 不能执行 shell 命令，不该因为这一步让整个构建失败。
-        continue-on-error: true
+        #
+        # 这一步曾经写成 `continue-on-error: true` + `::warning::`，
+        # 理由是「rootfs 缺失时 App 仍能启动，不该让构建失败」。
+        # 结果：`.gitignore` 里的 `runtime-v2/` 规则把脚本一起忽略了，
+        # CI 里根本没有这个文件（chmod 报 No such file），警告被吞，
+        # 产出的 IPA 悄悄少了 3.67 MB 的整个 Linux 环境，而 CI 是绿的。
+        # 现在 rootfs 是交付的一部分，缺失就是缺陷 —— 让它红。
         run: |
+          test -f scripts/runtime-v2/build-rootfs-alpine-ish.sh \
+            || { echo "::error::rootfs 构建脚本不存在（检查 .gitignore 是否误伤 scripts/runtime-v2/）"; exit 1; }
           chmod +x scripts/runtime-v2/build-rootfs-alpine-ish.sh
-          if ./scripts/runtime-v2/build-rootfs-alpine-ish.sh; then
-            ls -la apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz
-            # 明确写出测试目的，免得「看起来成功但文件不存在」被忽略。
-            test -s apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz \
-              || echo "::warning::rootfs 脚本返回成功但产物为空"
-          else
-            echo "::warning::rootfs 构建失败，App 将不含 Linux 工作环境"
-          fi
+          ./scripts/runtime-v2/build-rootfs-alpine-ish.sh
+          test -s apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz \
+            || { echo "::error::rootfs 脚本成功但产物为空"; exit 1; }
+          ls -la apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz
 
       - name: 确认资源清单
         # 打包前把 Resources 里到底有什么打出来。
-        # rootfs 是可选件，但「以为打进去了其实没有」必须能从日志一眼看出。
+        # 「以为打进去了其实没有」必须能从日志一眼看出，所以这里直接断言。
         run: |
           echo "=== Resources 树 ==="
           find apps/ios/CoomiApp/Resources -maxdepth 2 -type f | head -30
           echo "=== 前端文件数 ==="
-          find apps/ios/CoomiApp/Resources/web -type f 2>/dev/null | wc -l
+          find apps/ios/CoomiApp/Resources/web -type f | wc -l
           echo "=== rootfs ==="
-          ls -la apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz 2>/dev/null || echo "（无 rootfs，属可接受）"
+          ls -la apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz
+          test -s apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz \
+            || { echo "::error::Resources 里没有 rootfs，IPA 会缺 Linux 环境"; exit 1; }
+          test -f apps/ios/CoomiApp/Resources/web/index.html \
+            || { echo "::error::Resources 里没有 web/index.html，App 会白屏"; exit 1; }
 
       - name: 下载原生引擎静态库
         # 引擎在独立 job（macos-15）上编译，产物要显式下载过来 ——
