@@ -24,7 +24,19 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$HERE/../.." && pwd)"
+
+# 仓库根 = 脚本所在目录的上一级。
+#
+# 这里曾经写成 "$HERE/../.."，以为脚本在 scripts/runtime-v2/ 下。
+# 实际脚本就在 scripts/ 下，于是 ROOT 变成了仓库的**上一级**（D:\），
+# 产物落到了 D:\apps/ios/... —— 而 CI 里那个目录不存在，
+# `mkdir -p` 会默默创建它，最后 App 资源为空，看着像"下载失败"。
+# 用 git rev-parse 更稳：在子目录里调用也能找到真正的根。
+if ROOT="$(cd "$HERE/.." && pwd)" && [ -d "$ROOT/apps/ios" ]; then
+  :
+else
+  ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || echo "$HERE/..")"
+fi
 DEST="$ROOT/apps/ios/ThirdParty/ish"
 VERSION="0.3.3"
 BASE="https://github.com/Lolendor/ish-arm64-pkg/releases/download/v$VERSION"
@@ -140,16 +152,22 @@ if [ ! -f "$TARGET" ]; then
   # 断言这是 fakefs，不是普通 Alpine rootfs。
   # 这是「能不能真的 boot 起来」的分界线，不能省。
   #
-  # 注意：不要写成 `tar -tzf x | grep -q 'meta\.db'`。
-  # 脚本开了 pipefail，而 grep -q 命中后会立刻退出，
-  # tar 因为写不出去收到 SIGPIPE → 整条管道退出码非 0 →
-  # 在 set -e 下直接把脚本干掉。看似「找不到文件」，实则是自己杀自己。
-  # 所以先把清单落到变量里，再在字符串上匹配。
-  listing=$(tar -tzf "$DEST/$FS_NAME")
-  printf '%s\n' "$listing" | grep -q 'meta\.db' \
-    || die "fs.tar.gz 里没有 meta.db，不是 fakefs，boot 会失败"
-  printf '%s\n' "$listing" | grep -q 'ishsv' \
-    || die "fs.tar.gz 里没有 ishsv（PID1 supervisor），boot 会失败"
+  # 千万不要写成管道：
+  #     printf '%s\n' "$listing" | grep -q 'meta\.db'
+  # 脚本开了 pipefail，grep -q 命中即退出，printf 还在写 → SIGPIPE →
+  # 管道整体非 0 → 在 set -e 下被当成「没找到」。
+  # 这个坑我犯了两次（先是 tar|grep，再是 printf|grep），
+  # 因为「改成先落变量」只解决了一半 —— 管道还在。
+  # 所以这里用 case 做纯字符串匹配，不产生任何管道。
+  listing=$(tar -tzf "$DEST/$FS_NAME" 2>/dev/null || true)
+  case "$listing" in
+    *meta.db*) : ;;
+    *) die "fs.tar.gz 里没有 meta.db，不是 fakefs，boot 会失败" ;;
+  esac
+  case "$listing" in
+    *ishsv*) : ;;
+    *) die "fs.tar.gz 里没有 ishsv（PID1 supervisor），boot 会失败" ;;
+  esac
 
   cp "$DEST/$FS_NAME" "$TARGET"
   rm -f "$DEST/$FS_NAME"
