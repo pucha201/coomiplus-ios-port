@@ -217,22 +217,21 @@ jobs:
           cp -R dist/. ../ios/CoomiApp/Resources/web/
           echo "前端文件数: $(find ../ios/CoomiApp/Resources/web -type f | wc -l)"
 
-      - name: 准备 iSH rootfs（Alpine aarch64）
-        # iSH 需要一个 Linux 用户态才能跑 sh/git/python —— 引擎本身不需要它。
+      - name: 取 iSH 运行时（内核 + fakefs rootfs）
+        # 两样都要，缺一不可：
+        #   ① libIshKernel.xcframework —— 内核本体
+        #   ② fakefs rootfs           —— ish_embed_boot 要的是 fakefs 根
+        #      （含 meta.db + data/ + /sbin/ishsv），不是普通 Alpine tar。
         #
-        # 这一步曾经写成 `continue-on-error: true` + `::warning::`，
-        # 理由是「rootfs 缺失时 App 仍能启动，不该让构建失败」。
-        # 结果：`.gitignore` 里的 `runtime-v2/` 规则把脚本一起忽略了，
-        # CI 里根本没有这个文件（chmod 报 No such file），警告被吞，
-        # 产出的 IPA 悄悄少了 3.67 MB 的整个 Linux 环境，而 CI 是绿的。
-        # 现在 rootfs 是交付的一部分，缺失就是缺陷 —— 让它红。
+        # 这里替换掉了原来的 `build-rootfs-alpine-ish.sh`：那个脚本产出的是
+        # 纯 Alpine tar，没有 meta.db 也没有 ishsv，boot 必然失败
+        # （ISH_ERR_MOUNT/-2 或 ISH_ERR_EXECVE/-6）。体积看着对，跑不起来。
+        # 脚本内部有 checksum 校验 + fakefs 结构断言。
         run: |
-          test -f scripts/runtime-v2/build-rootfs-alpine-ish.sh \
-            || { echo "::error::rootfs 构建脚本不存在（检查 .gitignore 是否误伤 scripts/runtime-v2/）"; exit 1; }
-          chmod +x scripts/runtime-v2/build-rootfs-alpine-ish.sh
-          ./scripts/runtime-v2/build-rootfs-alpine-ish.sh
+          chmod +x scripts/fetch-ish.sh
+          ./scripts/fetch-ish.sh
           test -s apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz \
-            || { echo "::error::rootfs 脚本成功但产物为空"; exit 1; }
+            || { echo "::error::没有 linux-rootfs.tar.gz"; exit 1; }
           ls -la apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz
 
       - name: 确认资源清单
@@ -274,16 +273,6 @@ jobs:
           strings "$LIB" | grep -E "^_?coomi_(start|port|version)$" | sort -u
           strings "$LIB" | grep -qE "^_?coomi_(start|port|version)$" \
             || { echo "::error::静态库缺少 coomi_* 符号"; exit 1; }
-
-      - name: 取 iSH 内核（嵌入式 ABI）
-        # iSH 以 xcframework 形式引入，提供稳定 ABI v1：
-        #   ish_embed_boot / ish_embed_run_oneshot / ish_embed_shutdown / ish_embed_free
-        # 脚本里带 checksum 校验（与 SwiftPM 声明值一致）+ arm64 断言。
-        # 这一步失败必须红：COOMI_HAS_ISH=1 时没有库就直接编不过，
-        # 早失败的报错比链接期的一大堆 undefined symbol 好读得多。
-        run: |
-          chmod +x scripts/fetch-ish.sh
-          ./scripts/fetch-ish.sh
 
       - name: 校验 iSH 静态库
         run: |

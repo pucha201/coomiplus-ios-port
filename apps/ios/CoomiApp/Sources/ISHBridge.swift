@@ -41,15 +41,22 @@ final class ISHBridge {
     private init() {}
 
     /// 宿主侧 fakefs 根目录。
+    ///
+    /// 注意这不是「一个普通的 Linux 根文件系统目录」。iSH 的 fakefs 在根下
+    /// 放三样东西：`meta.db`（SQLite，记 inode/权限/时间戳）、`meta.db-shm`、
+    /// `meta.db-wal`，真实文件内容在 `data/` 下。`ish_embed_boot` 的头文件
+    /// 注释就是 "the dir that has data/ + meta.db"，所以必须先把 fakefs
+    /// 镜像铺到这里，再 boot。
     var linuxRootURL: URL {
         let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent(linuxRootName, isDirectory: true)
     }
 
-    /// rootfs 压缩包在 App 资源里的位置（若打包进来了）。
+    /// 打包进 App 的 fakefs rootfs（由 scripts/fetch-ish.sh 从上游 release 取）。
     ///
-    /// 我们不带完整 Alpine（几十 MB 会撑爆 IPA），只带**最小 userland**：
-    /// `/bin/sh` + 少量 coreutils + `git`。缺失时上层引导用户跳过。
+    /// 早期这里带的是 alpine-minirootfs 的 tar，格式不对 —— 没有 meta.db
+    /// 也没有 /sbin/ishsv，boot 会挂在 ISH_ERR_MOUNT(-2) 或
+    /// ISH_ERR_EXECVE(-6)。现在换成官方用 fakefsify 生成好的 fs.tar.gz。
     var bundledRootfsURL: URL? {
         Bundle.main.url(forResource: "linux-rootfs", withExtension: "tar.gz")
     }
@@ -69,20 +76,27 @@ final class ISHBridge {
     // MARK: - 启动 / 关闭
 
     /// 起 iSH 内核，幂等。返回 nil 表示成功，否则是可展示的中文错误。
+    ///
+    /// 顺序很关键，别调换：
+    ///   ① 先在**宿主侧**把 fakefs 镜像铺到 linuxRootURL（要有 meta.db + data/）
+    ///   ② 再调 ish_embed_boot —— 它会挂载 meta.db 并把 /sbin/ishsv 拉成 PID1
+    ///
+    /// 之前这里是反的：先拿空目录 boot，boot 完再想用 guest 的 /bin/tar 解包。
+    /// 但空目录连挂载都过不去（没有 meta.db），更不会有 /bin/tar，
+    /// 于是必然死在 ISH_ERR_MOUNT(-2)，而错误又被当成「不算致命」吞掉。
     func boot() -> String? {
         if isBooted { return nil }
 
         guard ISHRuntime.available() else {
-            return "未链接 iSH 运行时（libish.a）。引擎不受影响，只是没有 shell 工具。"
+            return "未链接 iSH 运行时（libIshKernel.a）。引擎不受影响，只是没有 shell 工具。"
         }
 
-        // ① 准备 fakefs 根。iSH 要求该目录已存在且可写。
-        let root = linuxRootURL
-        do {
-            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        } catch {
-            return "无法创建 Linux 根目录：\(error.localizedDescription)"
+        // ① 铺 fakefs。必须在 boot 之前。
+        if let prepErr = prepareFakefs() {
+            return prepErr
         }
+
+        let root = linuxRootURL
 
         // ② 起内核。printk 走 stderr，真机上用 Console.app 看。
         var inst: UnsafeMutableRawPointer?
@@ -100,10 +114,107 @@ final class ISHBridge {
         instance = inst
         lock.unlock()
 
-        // ③ 首次启动铺 rootfs（需要内核已跑起来才能用 guest 的 tar）。
-        if let installErr = installUserlandIfNeeded() {
-            NSLog("[iSH] rootfs 安装失败: %@", installErr)
-            // 不算致命：内核可用，只是没有 /bin/sh。
+        // ③ 自检：真跑一条命令，确认 userland 可用。
+        //    「boot 返回 0」只说明内核起来了，不代表能执行命令 ——
+        //    supervisor 没起来 / /bin/sh 缺失都会在这条上暴露。
+        if let probeErr = probeUserland() {
+            NSLog("[iSH] userland 自检失败: %@", probeErr)
+            // 不 return：内核可用，让上层决定是否降级。
+        } else {
+            NSLog("[iSH] userland 自检通过")
+        }
+        return nil
+    }
+
+    /// 把 bundled fakefs 镜像铺到 linuxRootURL。幂等（靠哨兵）。
+    ///
+    /// 镜像结构是 `fs/{meta.db, meta.db-shm, meta.db-wal, data/...}`，
+    /// 而 ish_embed_boot 要的根是「含 meta.db 的目录」，也就是 `fs/` 的内容，
+    /// 所以解包后要**把 fs/ 里的东西提到根上**，不能留一层 fs/。
+    private func prepareFakefs() -> String? {
+        let root = linuxRootURL
+        let metaDB = root.appendingPathComponent("meta.db")
+        let dataDir = root.appendingPathComponent("data", isDirectory: true)
+
+        // 已有完整 fakefs 就直接用。
+        if FileManager.default.fileExists(atPath: metaDB.path),
+           FileManager.default.fileExists(atPath: dataDir.path) {
+            return nil
+        }
+
+        guard let archive = bundledRootfsURL else {
+            return "App 包里没有 linux-rootfs.tar.gz（构建时 fetch-ish.sh 没跑？）"
+        }
+
+        // 清掉上次残留的半成品，避免 meta.db 与 data/ 来自不同版本。
+        if FileManager.default.fileExists(atPath: root.path) {
+            try? FileManager.default.removeItem(at: root)
+        }
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        } catch {
+            return "无法创建 fakefs 根目录：\(error.localizedDescription)"
+        }
+
+        // iOS 不能 fork/exec，但解 tar 是纯宿主操作。
+        // 用自带的 TarGzExtractor（纯 Swift，Compression framework 解 gzip），
+        // 不依赖 guest，也不依赖系统 tar —— 那正是之前的死结。
+        do {
+            let n = try TarGzExtractor.extract(fileAt: archive, into: root)
+            NSLog("[iSH] fakefs 解包完成，%d 个条目", n)
+        } catch {
+            return "解包 fakefs 失败：\(error.localizedDescription)"
+        }
+
+        // 若镜像里带一层 fs/，把它的内容提上来。
+        let nested = root.appendingPathComponent("fs", isDirectory: true)
+        if FileManager.default.fileExists(atPath: nested.appendingPathComponent("meta.db").path) {
+            if let err = promoteChildren(of: nested, to: root) {
+                return err
+            }
+            try? FileManager.default.removeItem(at: nested)
+        }
+
+        // 硬断言：少了这两个，boot 一定失败。
+        guard FileManager.default.fileExists(atPath: root.appendingPathComponent("meta.db").path) else {
+            return "fakefs 缺 meta.db —— 打包的 rootfs 不是 fakefs 格式"
+        }
+        let ishsv = root.appendingPathComponent("data/sbin/ishsv")
+        guard FileManager.default.fileExists(atPath: ishsv.path) else {
+            return "fakefs 缺 data/sbin/ishsv —— PID1 supervisor 不在，boot 会挂在 -6"
+        }
+        return nil
+    }
+
+    /// 把 dir 下的所有条目移动到 parent（用于消掉多余的一层 fs/）。
+    private func promoteChildren(of dir: URL, to parent: URL) -> String? {
+        let fm = FileManager.default
+        guard let kids = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
+            return "无法列出 \(dir.lastPathComponent)"
+        }
+        for kid in kids {
+            let dest = parent.appendingPathComponent(kid.lastPathComponent)
+            try? fm.removeItem(at: dest)
+            do {
+                try fm.moveItem(at: kid, to: dest)
+            } catch {
+                return "移动 \(kid.lastPathComponent) 失败：\(error.localizedDescription)"
+            }
+        }
+        return nil
+    }
+
+    /// 真跑一条命令确认 userland 能用。
+    private func probeUserland() -> String? {
+        guard let r = run(["/bin/sh", "-c", "echo coomi-ok; uname -s"],
+                          cwd: "/", timeoutMS: 15_000) else {
+            return "无法发起命令"
+        }
+        if r.exitCode != 0 {
+            return "退出码 \(r.exitCode)：\(r.stderrText.prefix(200))"
+        }
+        if !r.stdoutText.contains("coomi-ok") {
+            return "stdout 不含探针串：\(r.stdoutText.prefix(200))"
         }
         return nil
     }
@@ -126,46 +237,15 @@ final class ISHBridge {
 
     // MARK: - 安装 userland
 
-    /// 首次启动时把 rootfs 解包到 fakefs 根，幂等。
+    /// 把 bundled fakefs 镜像铺到 fakefs 根目录。
     ///
-    /// 用「哨兵文件」判断是否已装：比反复扫目录便宜，
-    /// 也比记 UserDefaults 可靠（用户可能删了 Documents）。
+    /// 曾经这里是把 tar 复制进 guest 再调 `/bin/tar xzf` —— 死结：
+    /// 空 fakefs 里没有 /bin/tar，而没有 rootfs 又 boot 不起来。
+    /// 现在改成纯宿主侧解开（TarGzExtractor），boot 之前就能铺好。
+    /// 具体流程见 prepareFakefs()。
     @discardableResult
     func installUserlandIfNeeded() -> String? {
-        let sentinel = linuxRootURL.appendingPathComponent(".userland-ok")
-        if FileManager.default.fileExists(atPath: sentinel.path) { return nil }
-
-        guard let archive = bundledRootfsURL else {
-            // 没有 rootfs 不算致命 —— 引擎照跑，只是 shell 工具不可用。
-            return nil
-        }
-
-        // iOS 不能 fork/exec 外部进程，所以解包只能让 guest 自己来。
-        // fakefs 根 = Linux 的 /，所以宿主 root/.rootfs.tar.gz 就是 guest /。
-        let guestTar = linuxRootURL.appendingPathComponent(".rootfs.tar.gz")
-        do {
-            if FileManager.default.fileExists(atPath: guestTar.path) {
-                try FileManager.default.removeItem(at: guestTar)
-            }
-            try FileManager.default.copyItem(at: archive, to: guestTar)
-        } catch {
-            return "复制 rootfs 失败：\(error.localizedDescription)"
-        }
-
-        guard let result = run(["/bin/tar", "xzf", "/.rootfs.tar.gz", "-C", "/"],
-                               cwd: "/", timeoutMS: 120_000) else {
-            return "内核未启动，无法解包 rootfs"
-        }
-
-        guard result.exitCode == 0 else {
-            // guest 里可能还没有 /bin/tar（空 fakefs 就是这种情况）——
-            // 这是预期的，交给上层决定是否重铺。
-            return "解包 rootfs 失败（exit \(result.exitCode)）：\(result.stderrText)"
-        }
-
-        try? FileManager.default.removeItem(at: guestTar)
-        try? Data().write(to: sentinel)
-        return nil
+        prepareFakefs()
     }
 
     // MARK: - 执行命令
