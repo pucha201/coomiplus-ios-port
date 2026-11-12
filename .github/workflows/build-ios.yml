@@ -338,6 +338,32 @@ jobs:
           path: apps/ios/out/CoomiIOS-unsigned.ipa
           if-no-files-found: error
 
+  # ───────────────── 3.5 产物验证（自动化验收）─────────────────
+  # 这一步存在的意义：前面每一步都可能"显示 success 但产物不对"
+  # （已经踩过两次：bsdtar 参数不兼容、busybox 校验正则错）。
+  # 所以不再靠人眼看日志，而是下载刚产出的 IPA 逐项断言。
+  verify:
+    name: 验证 IPA 产物
+    needs: app
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 下载刚构建的 IPA
+        uses: actions/download-artifact@v4
+        with:
+          name: CoomiIOS-unsigned
+          path: apps/ios/out
+
+      - name: 跑验证器（31 项断言）
+        run: |
+          ls -la apps/ios/out/
+          node apps/ios/scripts/verify-ipa.cjs apps/ios/out/CoomiIOS-unsigned.ipa
+
   # ───────────────── 4. Rust / 前端回归 ─────────────────
   test:
     name: rust + web tests
