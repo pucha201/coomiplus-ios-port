@@ -346,6 +346,20 @@ try {
     for (const s of ['coomi_start', 'coomi_port', 'coomi_version']) {
       check(`静态链入符号 ${s}`, blob.includes(s), blob.includes(s) ? '在二进制内' : '未找到');
     }
+
+    // iSH 内核：App 里到底有没有 Linux 运行时。
+    //
+    // 这是「AI 能不能执行 shell 命令」的判据。只看有没有 rootfs 是不够的 ——
+    // rootfs 只是文件系统数据；没有内核就是一堆死文件，装进包里除了占体积
+    // 什么也不做。必须确认 ish_embed_* 这套嵌入式 ABI 真的被静态链进来了。
+    const ishSyms = ['ish_embed_boot', 'ish_embed_run_oneshot', 'ish_embed_shutdown'];
+    const ishHit = ishSyms.filter((s) => blob.includes(s));
+    check('iSH 内核已静态链入', ishHit.length === ishSyms.length,
+      ishHit.length ? `${ishHit.length}/${ishSyms.length} 个 ish_embed_* 符号` : '未找到（COOMI_HAS_ISH=0？）');
+    // 内核内部符号，证明不是只有一层空壳。
+    const kernelHit = ['become_first_process', 'kernel_init', 'do_execve'].filter((s) => blob.includes(s));
+    check('iSH 内核代码在位', kernelHit.length >= 2,
+      kernelHit.length ? kernelHit.join(', ') : '未找到内核符号');
   }
 
   // 前端

@@ -20,12 +20,21 @@
 #
 # ============ 两种构建模式 ============
 #
-#   ① 未集成 iSH（默认）：COOMI_HAS_ISH=0，ish_support.c 走桩实现。
+#   ① 未集成 iSH：COOMI_HAS_ISH=0，ish_support.c 走桩实现。
 #      App 能编译能跑，对话/记忆/联网全正常，只是 AI 不能执行 shell 命令。
-#   ② 已集成 iSH：把 libish.a 放进 ThirdParty/ish/，打开 COOMI_HAS_ISH=1
-#      并取消下方 -lish 的注释。见 docs/README.md。
+#   ② 已集成 iSH（**当前默认**）：COOMI_HAS_ISH=1 + 链接 libIshKernel。
+#      AI 可以在 App 内执行 Linux 命令（sh/git/python 等）。
 #
-# 引擎库是**必需**的（COOMI_HAS_ISH 与它无关）：缺 libcoomi_ui.a 会链接失败，
+# 现在走 ②。iSH 以 xcframework 形式引入：
+#   ThirdParty/ish/libIshKernel.xcframework（含 ios-arm64 与模拟器两个 slice）
+# 来源 https://github.com/Lolendor/ish-arm64-pkg v0.3.3，
+# checksum f747c2e8...4fca，脚本 scripts/fetch-ish.sh 负责下载。
+#
+# 若该 xcframework 不存在，下面的 optional: true 会让工程仍能生成，
+# 但 COOMI_HAS_ISH=1 会因缺 ishembed.h 而编译失败 —— 这是有意的：
+# 半集成状态（声明有 iSH 却没有库）比彻底没有更难排查。
+#
+# 引擎库是**必需**的（与 COOMI_HAS_ISH 无关）：缺 libcoomi_ui.a 会链接失败，
 # 这是有意的 —— 没有引擎的 App 没有任何意义，应该在构建期就报错而不是运行期降级。
 name: CoomiIOS
 options:
@@ -36,10 +45,10 @@ options:
 
 settings:
   base:
-    # 默认不集成 iSH；集成后改成 1（或用 xcconfig 覆盖）。
+    # 已集成 iSH：真实现生效。
     GCC_PREPROCESSOR_DEFINITIONS:
       - "$(inherited)"
-      - "COOMI_HAS_ISH=0"
+      - "COOMI_HAS_ISH=1"
     # 静态库只保留 arm64（真机）。模拟器要单独编 x86_64，CI 不产出。
     ONLY_ACTIVE_ARCH: NO
 
@@ -75,28 +84,32 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Coomi
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
 
-        # ---- 引擎静态库（必需）----
-        # 由 CI 的 engine job 产出：cargo build -p coomi-ui --target aarch64-apple-ios --release
-        # 导出符号：coomi_start / coomi_port / coomi_version
+        # ish_support.c 里 `#include "ishembed.h"`，头在 xcframework 的
+        # Headers/ 下，XcodeGen 会把 framework 的头路径自动带上；
+        # 显式再写一份，避免换 XcodeGen 版本后头文件找不到。
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/ThirdParty/engine"
+          - "$(SRCROOT)/ThirdParty/ish/libIshKernel.xcframework/ios-arm64/Headers"
+
+        # ---- 链接（引擎必需 + iSH 必需）----
+        # 引擎由 CI 的 engine job 产出：cargo build -p coomi-ui --target
+        # aarch64-apple-ios --release，导出 coomi_start/coomi_port/coomi_version。
+        # iSH 走 -lIshKernel，库文件来自 xcframework 的 ios-arm64 slice。
         OTHER_LDFLAGS:
           - "$(inherited)"
           - "-lcoomi_ui"
+          - "-lIshKernel"
           # 引擎依赖的系统框架：tokio 的网络/时间、安全框架的随机数。
           - "-lc++"
           - "-framework Security"
           - "-framework SystemConfiguration"
+          # iSH 的 fakefs 用 sqlite3 存元数据，这是它唯一的额外依赖。
+          - "-lsqlite3"
         LIBRARY_SEARCH_PATHS:
           - "$(inherited)"
           - "$(SRCROOT)/ThirdParty/engine"
-
-        # ---- iSH（可选）----
-        # 头文件搜索路径常开无害：目录不存在时 clang 只是忽略。
-        HEADER_SEARCH_PATHS:
-          - "$(inherited)"
           - "$(SRCROOT)/ThirdParty/ish"
-        # 集成 iSH 后取消注释：
-        # OTHER_LDFLAGS: ["$(inherited)", "-lish"]
-        # LIBRARY_SEARCH_PATHS: ["$(inherited)", "$(SRCROOT)/ThirdParty/ish/build"]
     info:
       path: CoomiApp/Info.plist
       properties:

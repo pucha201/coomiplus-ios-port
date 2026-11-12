@@ -274,6 +274,30 @@ jobs:
           strings "$LIB" | grep -E "^_?coomi_(start|port|version)$" | sort -u
           strings "$LIB" | grep -qE "^_?coomi_(start|port|version)$" \
             || { echo "::error::静态库缺少 coomi_* 符号"; exit 1; }
+
+      - name: 取 iSH 内核（嵌入式 ABI）
+        # iSH 以 xcframework 形式引入，提供稳定 ABI v1：
+        #   ish_embed_boot / ish_embed_run_oneshot / ish_embed_shutdown / ish_embed_free
+        # 脚本里带 checksum 校验（与 SwiftPM 声明值一致）+ arm64 断言。
+        # 这一步失败必须红：COOMI_HAS_ISH=1 时没有库就直接编不过，
+        # 早失败的报错比链接期的一大堆 undefined symbol 好读得多。
+        run: |
+          chmod +x scripts/fetch-ish.sh
+          ./scripts/fetch-ish.sh
+
+      - name: 校验 iSH 静态库
+        run: |
+          LIB=apps/ios/ThirdParty/ish/libIshKernel.xcframework/ios-arm64/libIshKernel.a
+          HDR=apps/ios/ThirdParty/ish/libIshKernel.xcframework/ios-arm64/Headers/ishembed.h
+          test -f "$LIB" || { echo "::error::找不到 libIshKernel.a"; exit 1; }
+          test -f "$HDR" || { echo "::error::找不到 ishembed.h"; exit 1; }
+          ls -la "$LIB" "$HDR"
+          # 符号必须是嵌入 ABI 的，不是内核内部的 xX_main_Xx。
+          strings "$LIB" | grep -E "^_?ish_embed_(boot|run_oneshot|shutdown|free)$" | sort -u
+          for s in ish_embed_boot ish_embed_run_oneshot ish_embed_shutdown ish_embed_free; do
+            strings "$LIB" | grep -qE "^_?${s}$" \
+              || { echo "::error::libIshKernel.a 缺少 $s"; exit 1; }
+          done
           echo "✅ 静态库符号校验通过"
 
       - name: 安装 XcodeGen

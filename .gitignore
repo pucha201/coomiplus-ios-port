@@ -1,0 +1,89 @@
+# CoomiPlus iOS 移植 —— 只保留能在 CI 上构建所需的内容
+#
+# 原则：**排除所有预编译二进制与 Android 专用大文件**。
+# 理由：GitHub 单文件上限 100MB、仓库建议 <1GB；而这些文件对 iOS 构建完全无用
+# （iOS 侧要的是 Rust 源码 + 前端源码 + Flutter 外壳）。
+
+# ── 构建产物 ──
+target/
+**/target/
+build/
+**/build/
+dist/
+**/dist/
+.dart_tool/
+**/.dart_tool/
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.o
+*.obj
+*.pdb
+node_modules/
+**/node_modules/
+
+# ── Android 专用大二进制（iOS 不需要）──
+# 264MB 的 Debian rootfs，只服务 Android 的 proot
+runtime-v2-dist/
+# 注意：这里曾经写作 `runtime-v2/`，本意是忽略构建产物目录，
+# 但它同时也匹配了 `scripts/runtime-v2/` —— 那个目录放的是
+# iOS 的 rootfs 构建脚本（源码，必须提交）。
+# 后果：脚本在本地存在、在 CI 里不存在，`chmod` 报 No such file，
+# 被 workflow 的 ::warning:: 吞掉，于是 IPA 悄悄少了整个 Linux 环境。
+# 所以规则要限定在仓库根目录。
+/runtime-v2/
+# 预编译 so / aar / onnx 模型 / bootstrap 压缩包
+apps/coomi-app/app/src/main/jniLibs/
+apps/coomi-app/app/libs/
+apps/coomi-app/app/src/main/cpp/bootstrap-*.zip
+apps/coomi-app/app/src/main/assets/asr/
+apps/coomi-app/app/src/main/assets/web.zip
+apps/coomi-app/app/src/main/assets/runtime-v2-manifest.json*
+
+# ── iOS 打包产物（由 CI 或 build-rootfs-alpine-ish.sh 生成，不进库）──
+# 前端构建产物：几百个带内容 hash 的文件，每次构建都变
+apps/ios/CoomiApp/Resources/web/
+# Alpine rootfs：约 15~25 MB 的二进制
+apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz
+apps/ios/CoomiApp/Resources/*.tar.gz
+# 引擎静态库（由 engine job 产出，CI 里下载到 ThirdParty）
+apps/ios/ThirdParty/engine/
+
+# ── 签名密钥（绝不入库）──
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+!apps/ios/**/*.key
+
+# ── 运行时/用户数据 ──
+work/
+**/work/
+npm-cache/
+*.log
+*.pid
+*.tmp
+*.bak
+*.bak-*
+*.pre-*
+**/__pycache__/
+*.pyc
+
+# ── 前端构建缓存 ──
+apps/web/*.tsbuildinfo
+apps/web/dist/
+
+# ── 编辑器/系统 ──
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ── iSH 内核（第三方预编译产物，由 scripts/fetch-ish.sh 下载）──
+# 2.74MB 的静态库 + 头文件，不入库：体积大且可由 checksum 复现。
+apps/ios/ThirdParty/ish/
