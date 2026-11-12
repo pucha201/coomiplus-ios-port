@@ -51,6 +51,8 @@ sha256_of() {
 }
 
 # 三个源依次试；GitHub Release 直连在某些网络下会 reset。
+# 注意不要把 curl 的 stderr 全丢掉：CI 上排查时「为什么失败」比
+# 「失败了」重要得多。这里只在非 verbose 时收窄输出。
 fetch() {
   local url="$1" out="$2" what="$3"
   for prefix in "" "https://gh-proxy.com/" "https://ghfast.top/"; do
@@ -58,9 +60,23 @@ fetch() {
     local host
     host=$(printf '%s' "$full" | sed -E 's#https?://([^/]+)/.*#\1#')
     say "  $what ← $host"
+    rm -f "$out"
+    # 先存退出码再 say —— say 本身会覆盖 $?，之前写 `say "... 退出码 $?"`
+    # 永远打印 0，等于把失败信息也一起吞了。
     if curl -fL --retry 3 --retry-delay 2 --connect-timeout 30 \
-            --max-time 900 -sS -o "$out" "$full" 2>/dev/null; then
-      [ -s "$out" ] && return 0
+            --max-time 900 -sS -o "$out" "$full"; then
+      rc=0
+    else
+      rc=$?
+    fi
+    if [ "$rc" -eq 0 ] && [ -s "$out" ]; then
+      say "    成功 $(wc -c < "$out" | tr -d ' ') B"
+      return 0
+    fi
+    if [ "$rc" -ne 0 ]; then
+      say "    失败（curl 退出码 $rc）"
+    else
+      say "    下载为空"
     fi
   done
   return 1
@@ -98,12 +114,17 @@ TARGET="$RES/linux-rootfs.tar.gz"
 
 if [ -f "$TARGET" ] && [ -s "$TARGET" ]; then
   # 已有就核对是不是 fakefs（而不是旧的 Alpine tar）。
-  if tar -tzf "$TARGET" 2>/dev/null | grep -q 'meta\.db'; then
-    say "fakefs rootfs 已存在，跳过"
-  else
-    say "已存在的 linux-rootfs.tar.gz 不是 fakefs（缺 meta.db），重新下载"
-    rm -f "$TARGET"
-  fi
+  # 同样不能写成 `tar -tzf | grep -q`：pipefail 下 grep 提前退出会让
+  # tar 吃 SIGPIPE，管道整体非 0，于是把「其实是好的」误判成「不是 fakefs」，
+  # 每次 CI 都白下一遍 6MB。
+  existing_listing=$(tar -tzf "$TARGET" 2>/dev/null || true)
+  case "$existing_listing" in
+    *meta.db*) say "fakefs rootfs 已存在，跳过" ;;
+    *)
+      say "已存在的 linux-rootfs.tar.gz 不是 fakefs（缺 meta.db），重新下载"
+      rm -f "$TARGET"
+      ;;
+  esac
 fi
 
 if [ ! -f "$TARGET" ]; then
@@ -118,6 +139,12 @@ if [ ! -f "$TARGET" ]; then
 
   # 断言这是 fakefs，不是普通 Alpine rootfs。
   # 这是「能不能真的 boot 起来」的分界线，不能省。
+  #
+  # 注意：不要写成 `tar -tzf x | grep -q 'meta\.db'`。
+  # 脚本开了 pipefail，而 grep -q 命中后会立刻退出，
+  # tar 因为写不出去收到 SIGPIPE → 整条管道退出码非 0 →
+  # 在 set -e 下直接把脚本干掉。看似「找不到文件」，实则是自己杀自己。
+  # 所以先把清单落到变量里，再在字符串上匹配。
   listing=$(tar -tzf "$DEST/$FS_NAME")
   printf '%s\n' "$listing" | grep -q 'meta\.db' \
     || die "fs.tar.gz 里没有 meta.db，不是 fakefs，boot 会失败"
