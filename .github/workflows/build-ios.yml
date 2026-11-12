@@ -335,13 +335,20 @@ jobs:
             exit $status
           fi
 
-      - name: 上传编译日志（即使失败也留证据）
-        if: always()
+      - name: 上传编译日志（仅失败时）
+        # 只在编译失败时上传，用来留证据。
+        #
+        # 原来写的是 `if: always()` + `if-no-files-found: warn`，
+        # 结果编译**成功**的那次 run 里这一步反而报了 failure ——
+        # 成功时也会尝试上传，而 xcodebuild.log 在成功路径下没有保留下来，
+        # 于是这一整个 run 被判红，前面 12 步全白干。
+        # 成功的构建本来也不需要日志附件，日志已经在控制台里了。
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: xcodebuild-log
           path: apps/ios/xcodebuild.log
-          if-no-files-found: warn
+          if-no-files-found: ignore
 
       - name: 打包 ipa
         run: |
