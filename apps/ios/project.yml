@@ -109,7 +109,12 @@ targets:
         LIBRARY_SEARCH_PATHS:
           - "$(inherited)"
           - "$(SRCROOT)/ThirdParty/engine"
-          - "$(SRCROOT)/ThirdParty/ish"
+          # 注意要指到 xcframework 的 slice 里面，不是 ThirdParty/ish 本身。
+          # 库文件实际在 libIshKernel.xcframework/ios-arm64/libIshKernel.a，
+          # 只写 ThirdParty/ish 的话链接期会报 `ld: library 'IshKernel' not found`
+          # —— 编译阶段（ish_support.c 的 #include）是过的，所以只看编译日志
+          # 会以为一切正常，直到 Ld 阶段才炸。
+          - "$(SRCROOT)/ThirdParty/ish/libIshKernel.xcframework/ios-arm64"
     info:
       path: CoomiApp/Info.plist
       properties:
