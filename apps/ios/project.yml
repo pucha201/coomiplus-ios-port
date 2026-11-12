@@ -49,9 +49,19 @@ targets:
     platform: iOS
     sources:
       - path: CoomiApp/Sources
+      # 前端产物用**文件夹引用**（type: folder）保留 web/ 层级：
+      # 引擎的 ServeDir 指向 home/web，需要这一层目录；默认展开会把
+      # Resources/web/* 平铺到 .app 根部（index.html 与二进制混在一起）。
+      - path: CoomiApp/Resources/web
+        optional: true
+        type: folder
+        buildPhase: resources
+      # 其它单体资源（如 linux-rootfs.tar.gz）仍按普通资源处理。
       - path: CoomiApp/Resources
         optional: true
         buildPhase: resources
+        excludes:
+          - "web/**"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.coomi.ios

@@ -84,7 +84,22 @@ final class EngineController: ObservableObject {
                 }
             }
 
-            // ② 起引擎（原生 C ABI，阻塞到 tokio 起来即返回端口）。
+            // ② 把打进 Bundle 的前端产物同步到 home/web。
+            //
+            // 引擎用 `ServeDir::new(home/web)` 提供页面（见 ios_ffi.rs 的
+            // `static_dir = home.join("web")`），它只认这个**可写**路径 ——
+            // 不能直接让 ServeDir 指向 Bundle：App 沙盒里的 Bundle 是只读的，
+            // 而引擎还会往静态目录旁写运行时文件。
+            //
+            // 首次启动必然要拷；升级后也要拷 —— 否则用户一直看到旧壳
+            // （Vite 产物的 /assets/* 带内容 hash，旧 index.html 会引用已删文件）。
+            // 所以判据是「Bundle 里的构建比 home 里的新」，不是「home 里没有」。
+            if let syncError = Self.syncWebAssets() {
+                self.state = .failed(syncError)
+                return
+            }
+
+            // ③ 起引擎（原生 C ABI，阻塞到 tokio 起来即返回端口）。
             //
             // 已启动过时要复用**同一个 token**：引擎只认启动时那个。
             let token = self.issuedToken ?? Self.makeToken()
@@ -108,7 +123,7 @@ final class EngineController: ObservableObject {
                 return
             }
 
-            // ③ 健康检查：进程起来了不等于 HTTP 可用（可能还在加载 provider 配置）。
+            // ④ 健康检查：进程起来了不等于 HTTP 可用（可能还在加载 provider 配置）。
             let ok = await Self.waitForHealth(port: Int(port), token: token, timeout: 60)
             if Task.isCancelled { return }
 
@@ -136,6 +151,66 @@ final class EngineController: ObservableObject {
         case -3: return "引擎已在启动中"
         default: return "引擎启动失败（coomi_start 返回 \(code)）"
         }
+    }
+
+    // MARK: - 前端资源
+
+    /// 把 App 包里的前端产物同步到 `home/web`，返回错误描述（成功返回 nil）。
+    ///
+    /// 引擎的 `ServeDir` 指向 `home/web`，所以这个目录必须真实存在且是最新的。
+    /// Bundle 里放在 `web/` 子目录（见 project.yml 的 Resources 映射）；
+    /// 老包里前端是**平铺**的，所以两种布局都兜一下。
+    private static func syncWebAssets() -> String? {
+        let fm = FileManager.default
+        let dest = homeURL.appendingPathComponent("web", isDirectory: true)
+
+        // 找出 Bundle 里的前端根目录。
+        // 优先 `web/`（当前 project.yml 的布局），退而求其次用 Bundle 根
+        // （老布局把 index.html 平铺在 .app 里）。
+        let bundled: URL?
+        if let url = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "web") {
+            bundled = url.deletingLastPathComponent()
+        } else if let url = Bundle.main.url(forResource: "index", withExtension: "html") {
+            bundled = url.deletingLastPathComponent()
+        } else {
+            bundled = nil
+        }
+
+        guard let source = bundled else {
+            // 没打包前端时不要伪装成功：给出可诊断的说法。
+            // 本地开发（只编 Swift）会遇到这个，属于预期。
+            return "App 包内缺少前端产物（index.html）。"
+                + "请在 apps/web 跑 `npm run build` 后重新打包。"
+        }
+
+        // 版本判据：比较 Bundle 与 home 里 index.html 的**内容**。
+        //
+        // 不能用修改时间：.app 里的资源时间戳在打包/安装过程中会被归一化
+        // （同一构建内经常全变成同一时刻），拿它比较会导致「前端升级了但
+        // 用户看到旧壳」—— 而 Vite 的 /assets/* 带内容 hash，旧 index.html
+        // 引用的文件已经不存在，表现就是白屏。
+        //
+        // index.html 很小（约 1 KB），读进来比哈希的开销可以忽略。
+        let srcIndex = source.appendingPathComponent("index.html")
+        let dstIndex = dest.appendingPathComponent("index.html")
+        if let srcData = try? Data(contentsOf: srcIndex),
+           let dstData = try? Data(contentsOf: dstIndex),
+           srcData == dstData {
+            return nil  // 内容一致，不必重拷
+        }
+
+        do {
+            if fm.fileExists(atPath: dest.path) {
+                try fm.removeItem(at: dest)
+            }
+            try fm.createDirectory(at: dest, withIntermediateDirectories: true)
+            for item in try fm.contentsOfDirectory(at: source, includingPropertiesForKeys: nil) {
+                try fm.copyItem(at: item, to: dest.appendingPathComponent(item.lastPathComponent))
+            }
+        } catch {
+            return "无法准备前端资源：\(error.localizedDescription)"
+        }
+        return nil
     }
 
     // MARK: - token
