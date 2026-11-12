@@ -292,12 +292,23 @@ jobs:
           test -f "$LIB" || { echo "::error::找不到 libIshKernel.a"; exit 1; }
           test -f "$HDR" || { echo "::error::找不到 ishembed.h"; exit 1; }
           ls -la "$LIB" "$HDR"
-          # 符号必须是嵌入 ABI 的，不是内核内部的 xX_main_Xx。
-          strings "$LIB" | grep -E "^_?ish_embed_(boot|run_oneshot|shutdown|free)$" | sort -u
+
+          # 注意别用 `grep -E '^_?ish_embed_boot$'`。
+          # Mach-O 的字符串表把相邻符号名连成一串，实际内容长这样：
+          #   ..._ish_ffi_task_start._ish_embed_boot._ish_embed_free._ish_...
+          # 中间没有换行，strings 会把整串当一行输出，`$` 锚点永远不匹配。
+          # 这跟之前 `grep -qx 'bin/busybox'` 踩的是同一类坑（第三次了）。
+          # 所以这里只要求"子串出现"，不加行首行尾锚点。
+          blob=$(strings -a "$LIB")
           for s in ish_embed_boot ish_embed_run_oneshot ish_embed_shutdown ish_embed_free; do
-            strings "$LIB" | grep -qE "^_?${s}$" \
+            printf '%s' "$blob" | grep -q -- "$s" \
               || { echo "::error::libIshKernel.a 缺少 $s"; exit 1; }
+            echo "  ✅ $s"
           done
+          # 确认是嵌入式 ABI 而不是内核内部私有入口
+          printf '%s' "$blob" | grep -q -- 'become_first_process' \
+            || { echo "::error::缺少内核符号 become_first_process"; exit 1; }
+          echo "  ✅ become_first_process（内核本体在位）"
           echo "✅ 静态库符号校验通过"
 
       - name: 安装 XcodeGen
