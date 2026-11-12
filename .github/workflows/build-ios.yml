@@ -246,26 +246,41 @@ jobs:
         # （ISH_ERR_MOUNT/-2 或 ISH_ERR_EXECVE/-6）。体积看着对，跑不起来。
         # 脚本内部有 checksum 校验 + fakefs 结构断言。
         run: |
+          # 断言一律用绝对路径。曾经的坑：脚本内部用绝对 $TARGET 汇报「成功」，
+          # 而工作流这边用相对路径去 test —— 两边一旦对 base 的理解不同，
+          # 就会出现「ls 明明列出来了，紧接着却说没有」的鬼故事。
+          # 绝对路径 + 把两边的 cwd 都打出来，这种分歧就不可能再躲过日志。
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "pwd=$(pwd)"
+
           chmod +x scripts/fetch-ish.sh
           ./scripts/fetch-ish.sh
-          test -s apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz \
-            || { echo "::error::没有 linux-rootfs.tar.gz"; exit 1; }
-          ls -la apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz
+
+          ROOTFS="$GITHUB_WORKSPACE/apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz"
+          echo "期望 rootfs: $ROOTFS"
+          ls -la "$ROOTFS" 2>/dev/null || echo "（该路径不存在）"
+
+          test -s "$ROOTFS" \
+            || { echo "::error::没有 linux-rootfs.tar.gz（$ROOTFS）"; exit 1; }
+          echo "rootfs 大小: $(stat -f%z "$ROOTFS") 字节"
 
       - name: 确认资源清单
         # 打包前把 Resources 里到底有什么打出来。
         # 「以为打进去了其实没有」必须能从日志一眼看出，所以这里直接断言。
         run: |
+          RES="$GITHUB_WORKSPACE/apps/ios/CoomiApp/Resources"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "pwd=$(pwd)"
           echo "=== Resources 树 ==="
-          find apps/ios/CoomiApp/Resources -maxdepth 2 -type f | head -30
+          find "$RES" -maxdepth 2 -type f | head -30
           echo "=== 前端文件数 ==="
-          find apps/ios/CoomiApp/Resources/web -type f | wc -l
+          find "$RES/web" -type f | wc -l
           echo "=== rootfs ==="
-          ls -la apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz
-          test -s apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz \
-            || { echo "::error::Resources 里没有 rootfs，IPA 会缺 Linux 环境"; exit 1; }
-          test -f apps/ios/CoomiApp/Resources/web/index.html \
-            || { echo "::error::Resources 里没有 web/index.html，App 会白屏"; exit 1; }
+          ls -la "$RES/linux-rootfs.tar.gz"
+          test -s "$RES/linux-rootfs.tar.gz" \
+            || { echo "::error::Resources 里没有 rootfs（$RES/linux-rootfs.tar.gz），IPA 会缺 Linux 环境"; exit 1; }
+          test -f "$RES/web/index.html" \
+            || { echo "::error::Resources 里没有 web/index.html（$RES/web/index.html），App 会白屏"; exit 1; }
 
       - name: 下载原生引擎静态库
         # 引擎在独立 job（macos-15）上编译，产物要显式下载过来 ——
