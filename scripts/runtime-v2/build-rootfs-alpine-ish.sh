@@ -58,8 +58,12 @@ else
   [[ "$ok" = 1 ]] || { echo "所有源都失败" >&2; exit 1; }
 fi
 
-# 校验：必须是 gzip、且含 /bin/busybox
-tar -tzf "$TARBALL" | grep -qx 'bin/busybox' \
+# 校验：必须是 gzip、且含 bin/busybox。
+#
+# 注意条目可能带 "./" 前缀（GNU tar 打包的归档常见），所以用 grep -E
+# 匹配可选的 "./"，而不是 -qx 精确匹配整行 —— 之前就是因为这个假设
+# 让 CI 在下载成功（3.76 MB 已落盘）后误判成「不是有效的 rootfs」。
+tar -tzf "$TARBALL" | grep -Eq '^(\./)?bin/busybox$' \
   || { echo "不是有效的 alpine rootfs（缺 bin/busybox）" >&2; exit 1; }
 
 # ── 2. 解包到工作目录 ────────────────────────────────────────────────
