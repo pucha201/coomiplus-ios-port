@@ -206,7 +206,8 @@ jobs:
           ls -la apps/ios/CoomiApp/Resources
 
       - name: 构建前端并放入 Resources
-        # WebF 壳加载的是打进 App 的前端产物，CI 里必须先构建出来。
+        # WebView 加载的是引擎进程内提供的页面（http://127.0.0.1:<port>），
+        # 前端产物必须打进 App —— 运行时由 Swift 侧同步到 home/web。
         run: |
           cd apps/web
           npm ci --prefer-offline --no-audit --no-fund
@@ -215,6 +216,19 @@ jobs:
           mkdir -p ../ios/CoomiApp/Resources/web
           cp -R dist/. ../ios/CoomiApp/Resources/web/
           echo "前端文件数: $(find ../ios/CoomiApp/Resources/web -type f | wc -l)"
+
+      - name: 准备 iSH rootfs（Alpine aarch64）
+        # iSH 需要一个 Linux 用户态才能跑 sh/git/python —— 引擎本身不需要它。
+        # 这里只做「有就打包、没有就跳过」：rootfs 缺失时 App 仍能启动并对话，
+        # 只是 AI 不能执行 shell 命令，不该因为这一步让整个构建失败。
+        continue-on-error: true
+        run: |
+          chmod +x scripts/runtime-v2/build-rootfs-alpine-ish.sh
+          if ./scripts/runtime-v2/build-rootfs-alpine-ish.sh; then
+            ls -la apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz
+          else
+            echo "::warning::rootfs 构建失败，App 将不含 Linux 工作环境"
+          fi
 
       - name: 下载原生引擎静态库
         # 引擎在独立 job（macos-15）上编译，产物要显式下载过来 ——
