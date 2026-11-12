@@ -226,9 +226,23 @@ jobs:
           chmod +x scripts/runtime-v2/build-rootfs-alpine-ish.sh
           if ./scripts/runtime-v2/build-rootfs-alpine-ish.sh; then
             ls -la apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz
+            # 明确写出测试目的，免得「看起来成功但文件不存在」被忽略。
+            test -s apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz \
+              || echo "::warning::rootfs 脚本返回成功但产物为空"
           else
             echo "::warning::rootfs 构建失败，App 将不含 Linux 工作环境"
           fi
+
+      - name: 确认资源清单
+        # 打包前把 Resources 里到底有什么打出来。
+        # rootfs 是可选件，但「以为打进去了其实没有」必须能从日志一眼看出。
+        run: |
+          echo "=== Resources 树 ==="
+          find apps/ios/CoomiApp/Resources -maxdepth 2 -type f | head -30
+          echo "=== 前端文件数 ==="
+          find apps/ios/CoomiApp/Resources/web -type f 2>/dev/null | wc -l
+          echo "=== rootfs ==="
+          ls -la apps/ios/CoomiApp/Resources/linux-rootfs.tar.gz 2>/dev/null || echo "（无 rootfs，属可接受）"
 
       - name: 下载原生引擎静态库
         # 引擎在独立 job（macos-15）上编译，产物要显式下载过来 ——

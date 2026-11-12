@@ -112,15 +112,39 @@ chmod 0644 "$ROOTFS/etc/profile.d/git-safe.sh"
 # ── 7. 打包 ─────────────────────────────────────────────────────────
 OUT="$OUTPUT/linux-rootfs.tar.gz"
 say "打包 → $OUT"
-# 关键：用 tar 的 --owner/--group 归一化，避免把构建机的 uid 带进去。
-# iSH 是 fakefs（普通宿主目录），解包后权限位会原样落盘，uid 不一致会导致
-# 部分文件不可读。这里统一压成 root:root。
-tar -czf "$OUT" \
-  --owner=0 --group=0 --numeric-owner \
-  -C "$ROOTFS" .
+
+# uid/gid 归一化到 root:root。
+#
+# 目的：iSH 是 fakefs（普通宿主目录），解包后权限位与所有者会原样落盘。
+# 如果构建机的 uid（比如 macOS 的 501）被压进去，guest 里会变成
+# "uid 501 拥有 /bin/sh"，部分文件在 iSH 里不可读。
+#
+# 但 GNU tar 和 BSD tar 的参数**不兼容**：
+#   GNU: --owner=0 --group=0 --numeric-owner
+#   BSD: --uid 0 --gid 0        （没有 --owner/--numeric-owner）
+# macOS 自带的是 bsdtar，直接写 GNU 选项会报
+# "tar: unknown option -- owner" 并让整个脚本失败。
+if tar --version 2>/dev/null | grep -qi 'gnu tar'; then
+  TAR_OWN=(--owner=0 --group=0 --numeric-owner)
+  say "tar: GNU，用 --owner/--group"
+else
+  TAR_OWN=(--uid 0 --gid 0)
+  say "tar: BSD/bsdtar，用 --uid/--gid"
+fi
+
+# COPYFILE_DISABLE=1：防止 macOS 往归档里塞 ._AppleDouble（__MACOSX）垃圾文件。
+COPYFILE_DISABLE=1 tar -czf "$OUT" "${TAR_OWN[@]}" -C "$ROOTFS" .
+
+# 校验产物真的存在且是 gzip —— 免得静默产出一个 0 字节文件。
+[[ -s "$OUT" ]] || { echo "打包失败：$OUT 不存在或为空" >&2; exit 1; }
+tar -tzf "$OUT" >/dev/null 2>&1 || { echo "打包失败：$OUT 不是有效 gzip" >&2; exit 1; }
 
 SIZE=$(wc -c < "$OUT" | tr -d ' ')
-SHA=$(shasum -a 256 "$OUT" 2>/dev/null | awk '{print $1}' || sha256sum "$OUT" | awk '{print $1}')
+if command -v shasum >/dev/null 2>&1; then
+  SHA=$(shasum -a 256 "$OUT" | awk '{print $1}')
+else
+  SHA=$(sha256sum "$OUT" | awk '{print $1}')
+fi
 say "完成：$OUT"
 echo "  大小 : $(( SIZE / 1024 / 1024 )) MB ($SIZE B)"
 echo "  SHA256: $SHA"
