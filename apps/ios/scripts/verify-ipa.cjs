@@ -351,15 +351,32 @@ try {
     //
     // 这是「AI 能不能执行 shell 命令」的判据。只看有没有 rootfs 是不够的 ——
     // rootfs 只是文件系统数据；没有内核就是一堆死文件，装进包里除了占体积
-    // 什么也不做。必须确认 ish_embed_* 这套嵌入式 ABI 真的被静态链进来了。
-    const ishSyms = ['ish_embed_boot', 'ish_embed_run_oneshot', 'ish_embed_shutdown'];
-    const ishHit = ishSyms.filter((s) => blob.includes(s));
-    check('iSH 内核已静态链入', ishHit.length === ishSyms.length,
-      ishHit.length ? `${ishHit.length}/${ishSyms.length} 个 ish_embed_* 符号` : '未找到（COOMI_HAS_ISH=0？）');
-    // 内核内部符号，证明不是只有一层空壳。
-    const kernelHit = ['become_first_process', 'kernel_init', 'do_execve'].filter((s) => blob.includes(s));
-    check('iSH 内核代码在位', kernelHit.length >= 2,
-      kernelHit.length ? kernelHit.join(', ') : '未找到内核符号');
+    // 什么也不做。
+    //
+    // 判据不要用符号名（ish_embed_boot 之类）：Release 构建会 strip 符号表，
+    // 实测最终二进制里 ish_embed_boot 出现 0 次，但内核明明链进去了。
+    // 可靠的做法是找 **调试信息里残留的目标文件名**：
+    //   .../libIshKernel.xcframework/ios-arm64/libIshKernel.a(kernel_task.c.o)
+    // 静态库每个被抽用的 .o 都会留下这么一条，strip 不掉。
+    const objs = new Set();
+    const objRe = /libIshKernel\.a\(([A-Za-z0-9_]+\.c\.o)\)/g;
+    let om;
+    while ((om = objRe.exec(blob))) objs.add(om[1]);
+    const objList = [...objs];
+
+    check('iSH 内核已静态链入', objList.length >= 6,
+      objList.length ? `${objList.length} 个 iSH 目标文件链入` : '未找到 libIshKernel.a 的成员');
+
+    // 必须包含 fakefs 与内核核心：只有 glue 没有内核的话，boot 一样跑不起来。
+    const needGroups = [
+      { name: 'fakefs（fs_fake/fs_inode/fs_mount）', re: /^fs_(fake|inode|mount)\.c\.o$/ },
+      { name: '内核任务调度（kernel_task）', re: /^kernel_task\.c\.o$/ },
+      { name: '内存管理（kernel_memory/kernel_mmap）', re: /^kernel_(memory|mmap)\.c\.o$/ },
+    ];
+    for (const g of needGroups) {
+      const hit = objList.filter((n) => g.re.test(n));
+      check(`iSH ${g.name}`, hit.length > 0, hit.length ? hit.join(', ') : '缺失');
+    }
   }
 
   // 前端
@@ -388,15 +405,36 @@ try {
     }
     if (tar) {
       check('rootfs 是有效 gzip', true, `${tar.length} 个条目`);
-      const bbPath = tar.find((t) => /^(\.\/)?bin\/busybox$/.test(t.name));
-      check('rootfs 含 bin/busybox', !!bbPath, bbPath ? `${bbPath.size} B` : '缺失');
-      const shLink = tar.find((t) => /^(\.\/)?bin\/sh$/.test(t.name));
-      check('rootfs 含 bin/sh', !!shLink, shLink ? `type=${shLink.type}` : '缺失');
-      const ws = tar.find((t) => /^(\.\/)?workspace\/$/.test(t.name));
-      check('rootfs 含 /workspace', !!ws, ws ? '存在' : '缺失');
+
+      // iSH 要的是 **fakefs 镜像**，不是普通 Alpine rootfs。
+      //
+      // ish_embed_boot 的头文件写的是：
+      //   rootfs_path = "host fs path to fakefs root (the dir that has data/ + meta.db)"
+      // 所以判据是 meta.db + data/ + /sbin/ishsv（PID1 supervisor），
+      // 而不是 bin/busybox 这种 Alpine 路径。
+      // 早期打进包的是 alpine-minirootfs 的 tar，没有 meta.db 也没有 ishsv，
+      // 链接阶段一切正常、boot 时才挂在 ISH_ERR_MOUNT(-2) —— 这条断言就是为了拦住它。
+      const metaDb = tar.find((t) => /^(\.\/)?(fs\/)?meta\.db$/.test(t.name));
+      check('rootfs 是 fakefs（含 meta.db）', !!metaDb,
+        metaDb ? `${metaDb.size} B（SQLite 元数据）` : '缺失 —— 这是普通 Alpine tar，boot 会失败');
+
+      const ishsv = tar.find((t) => /^(\.\/)?(fs\/)?data\/sbin\/ishsv$/.test(t.name));
+      check('rootfs 含 /sbin/ishsv（PID1）', !!ishsv,
+        ishsv ? `${ishsv.size} B` : '缺失 —— supervisor 不在，boot 会挂在 -6');
+
+      const bb = tar.find((t) => /^(\.\/)?(fs\/)?data\/bin\/busybox$/.test(t.name));
+      check('rootfs 含 /bin/busybox', !!bb, bb ? `${bb.size} B` : '缺失');
+
+      const realFiles = tar.filter((t) => t.type === '0').length;
+      check('rootfs 文件数合理', realFiles > 100, `${realFiles} 个普通文件`);
+
+      // uid/gid：fakefs 镜像里带 501:20 是假的（上游打包机留下的），
+      // 但 iSH 的 fakefs 不靠 tar 的 uid/gid 工作（它读 meta.db），
+      // 所以这里只做提示，不判失败。
       const badUid = tar.filter((t) => t.uid !== 0 || t.gid !== 0);
-      check('rootfs uid/gid 全为 0', badUid.length === 0,
-        badUid.length === 0 ? '全部归一化' : `${badUid.length} 个条目非 0（如 ${badUid[0].name} uid=${badUid[0].uid}）`);
+      if (badUid.length) {
+        console.log(`   ℹ ${badUid.length} 个条目 uid/gid 非 0（fakefs 走 meta.db，不影响）`);
+      }
     }
   }
 
