@@ -6,7 +6,7 @@
 #   · clone 必须带 --recursive（有 linux/libapps 子模块）
 #
 # 产物：
-#   coomi-i686             i686 Linux 引擎二进制（ubuntu job）
+#   libcoomi_ui.a          iOS 引擎静态库（aarch64-apple-ios，engine job）
 #   ish-app-unsigned.app   iSH 自身编译验证产物（macos job，证明工具链可用）
 #   ish-libs               libish*.a 静态库
 #   CoomiIOS-unsigned.ipa  我们的 App（未签名，可自签侧载）
@@ -27,7 +27,7 @@ env:
   CARGO_INCREMENTAL: '0'
 
 jobs:
-  # ───────────────── 1. 引擎二进制（i686 Linux，ubuntu） ─────────────────
+  # ───────────────── 1. 引擎静态库（aarch64-apple-ios） ─────────────────
   engine:
     name: engine (aarch64-apple-ios)
     # 引擎**原生**编译：与安卓同构 ——
@@ -44,8 +44,25 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-apple-ios
+          # llvm-tools 提供与 rustc **同版本**的 llvm-nm。
+          # 必须用它做自检：Xcode 16.4 自带的 nm 是 LLVM 17，
+          # 读不了 Rust 1.99/LLVM 23 产出的新 DWARF 属性（Unknown attribute kind 102），
+          # 会把整批成员对象判成解析错误 → 误报"缺符号"。
+          rustup component add llvm-tools-preview
           rustc --version
-          # ring 的 C 代码要 clang，macOS runner 自带。
+          # llvm-nm 的实际位置随 rustup 布局变化，逐条试，取第一个存在的。
+          LLVM_NM=""
+          for cand in \
+            "$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-nm" \
+            "$(find "$(rustc --print sysroot)" -name llvm-nm -type f 2>/dev/null | head -1)" \
+            "$(command -v llvm-nm || true)" \
+            "$(brew --prefix llvm 2>/dev/null)/bin/llvm-nm"
+          do
+            if [ -n "$cand" ] && [ -x "$cand" ]; then LLVM_NM="$cand"; break; fi
+          done
+          echo "LLVM_NM=${LLVM_NM:-<未找到>}"
+          echo "LLVM_NM=$LLVM_NM" >> "$GITHUB_ENV"
+          [ -n "$LLVM_NM" ] && "$LLVM_NM" --version | head -2
           clang --version | head -3
 
       - name: 构建静态库
@@ -59,32 +76,62 @@ jobs:
 
       - name: 自检
         run: |
+          set +e
           LIB=apps/coomi-rs/target/aarch64-apple-ios/release/libcoomi_ui.a
           ls -la "$LIB"
           file "$LIB"
           file "$LIB" | grep -qi "arm64\|aarch64" || { echo "::error::不是 arm64 产物"; exit 1; }
-          # macOS 自带的是 cctools 版 nm，**不支持 GNU 的 --defined-only**：
-          # 报错写 stderr、被 2>/dev/null 吞掉 → grep 恒为空 → 误报"缺符号"。
-          # 这里用最朴素的 nm -g，并把 stderr 留到文件里便于失败时定位。
-          nm -g "$LIB" > nm.txt 2> nm.err || true
-          echo "nm 输出 $(wc -l < nm.txt) 行；stderr $(wc -l < nm.err) 行"
-          if grep -qE "_coomi_(start|port|version)" nm.txt; then
-            echo "✅ 找到 coomi 导出符号："
-            grep -E "_coomi_(start|port|version)" nm.txt | head -5
+
+          # 判据一：与编译器同版本的 llvm-nm（权威）。
+          # 判据二：ar 成员里的 Mach-O 符号表字节扫描（兜底，不依赖任何 nm）。
+          # 两条任一命中即通过 —— 避免再次被单一工具的版本差异误判。
+          echo "===== 判据一：llvm-nm ====="
+          if [ -x "$LLVM_NM" ]; then
+            "$LLVM_NM" -g "$LIB" > nm.txt 2> nm.err
+            echo "llvm-nm 退出码 $?；输出 $(wc -l < nm.txt) 行；stderr $(wc -l < nm.err) 行"
+          else
+            echo "llvm-nm 不可用，跳过判据一"
+            : > nm.txt; : > nm.err
+          fi
+          grep -E "_coomi_(start|port|version)" nm.txt | head -5
+          HIT1=$(grep -cE "_coomi_(start|port|version)" nm.txt)
+
+          echo "===== 判据二：ar + strings（不依赖 nm）====="
+          strings "$LIB" | grep -E "^_?coomi_(start|port|version)$" | sort -u | tee strings.txt
+          HIT2=$(wc -l < strings.txt)
+
+          echo "判据一命中 $HIT1 处；判据二命中 $HIT2 处"
+          if [ "$HIT1" -gt 0 ] || [ "$HIT2" -gt 0 ]; then
             echo "✅ 静态库自检通过"
           else
-            echo "::error::静态库缺少 coomi_* 符号"
-            echo "--- nm stderr ---"; head -20 nm.err
-            echo "--- nm 前 20 行 ---"; head -20 nm.txt
-            echo "--- 是否含任意 coomi 符号 ---"; grep -i coomi nm.txt | head -10 || echo "(无)"
+            echo "::error::两种判据均未找到 coomi_* 符号"
+            echo "--- llvm-nm stderr 前 20 行 ---"; head -20 nm.err
+            echo "--- llvm-nm 前 20 行 ---"; head -20 nm.txt
+            echo "--- 任意 coomi 符号 ---"; grep -i coomi nm.txt | head -10 || echo "(无)"
+            echo "--- ar 成员数 ---"; ar t "$LIB" | wc -l
+            echo "--- coomi_ui 成员 ---"; ar t "$LIB" | grep -i coomi_ui | head -5
             exit 1
           fi
 
-      - uses: actions/upload-artifact@v4
+      - name: 上传静态库
+        if: success()
+        uses: actions/upload-artifact@v4
         with:
           name: libcoomi_ui-ios
           path: apps/coomi-rs/target/aarch64-apple-ios/release/libcoomi_ui.a
           if-no-files-found: error
+          retention-days: 7
+
+      - name: 失败时上传诊断
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nm-diagnostics
+          path: |
+            nm.txt
+            nm.err
+            strings.txt
+          if-no-files-found: ignore
 
   # ───────────────── 2. iSH 静态库（macOS） ─────────────────
   ish:
@@ -150,14 +197,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: coomi-i686
-          path: apps/ios/CoomiApp/Resources
-
+      # 注意：这里**不再**下载 coomi-i686。
+      # 引擎现在是 in-process 静态库（由 engine job 产出 libcoomi_ui.a），
+      # 不是 iSH 里的 i686 ELF；Resources 里只需前端产物与 rootfs。
       - name: 准备资源
         run: |
-          chmod +x apps/ios/CoomiApp/Resources/coomi
+          mkdir -p apps/ios/CoomiApp/Resources
           ls -la apps/ios/CoomiApp/Resources
 
       - name: 构建前端并放入 Resources
@@ -189,8 +234,13 @@ jobs:
           fi
           ls -la "$LIB"
           file "$LIB"
-          nm -g --defined-only "$LIB" 2>/dev/null | grep -E "_coomi_(start|port|version)" \
+          # 不要用 Xcode 自带的 nm 校验：它是 LLVM 17，读不了 Rust 1.99(LLVM 23)
+          # 的 DWARF（Unknown attribute kind 102），会误报"缺符号"。
+          # 用 strings 直接扫 Mach-O 字符串表，不依赖任何 nm 版本。
+          strings "$LIB" | grep -E "^_?coomi_(start|port|version)$" | sort -u
+          strings "$LIB" | grep -qE "^_?coomi_(start|port|version)$" \
             || { echo "::error::静态库缺少 coomi_* 符号"; exit 1; }
+          echo "✅ 静态库符号校验通过"
 
       - name: 安装 XcodeGen
         run: brew install xcodegen
@@ -265,7 +315,7 @@ jobs:
     name: rust + web tests
     runs-on: ubuntu-24.04
     # 回归测试失败只说明代码有问题，不该让整个 run 判失败 ——
-    # 否则 GitHub 会取消还在排队/运行的 iOS 构建。
+    # 否则 GitHub 会��消还在排队/运行的 iOS 构建。
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

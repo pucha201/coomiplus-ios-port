@@ -33,7 +33,8 @@ struct RootView: View {
         ZStack {
             switch engine.state {
             case .idle:
-                // 先做就绪诊断：缺东西就直接进引导页，不盲目启动。
+                // 先做就绪诊断：缺阻塞项就进引导页，不盲目启动。
+                // 可选项缺失（如 iSH）不拦启动 —— 引擎是原生的，不依赖它。
                 if let readiness, !readiness.canStart {
                     OnboardingView(report: readiness) {
                         self.readiness = ReadinessChecker.check()
@@ -44,7 +45,7 @@ struct RootView: View {
                 } else {
                     LaunchView(
                         title: "准备引擎",
-                        detail: "即将在 iSH 中启动 Coomi 引擎",
+                        detail: "即将在进程内启动 Coomi 引擎（原生 aarch64）",
                         actionTitle: "开始",
                         action: { engine.ensureRunning() }
                     )
@@ -53,7 +54,7 @@ struct RootView: View {
             case .launching:
                 LaunchView(
                     title: "正在启动引擎…",
-                    detail: "首次启动需要几秒；解包 rootfs 时可能需要更久。",
+                    detail: "首次启动需要几秒。",
                     actionTitle: nil,
                     action: nil
                 )
@@ -149,9 +150,9 @@ struct OnboardingView: View {
                     Text(report.summary).font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            // 明确写清：这不是崩溃，也不是在部署 proot。
-            Text("iOS 版不使用 proot，也不会在启动时下载或部署任何东西 —— "
-                 + "下面这些组件需要在**打包时**放进 App。")
+            // 说清两件事：引擎是原生的；只有 shell 环境才需要额外产物。
+            Text("引擎以 aarch64 原生静态库链进 App，不需要模拟器、也不是 Linux 二进制。"
+                 + "标「可选·缺失」的项不拦启动 —— 只影响 AI 能否执行 shell 命令。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.top, 2)
@@ -164,11 +165,10 @@ struct OnboardingView: View {
             HStack(spacing: 8) {
                 Image(systemName: item.isReady
                       ? "checkmark.circle.fill"
-                      : (item.isBlocking ? "exclamationmark.circle.fill" : "minus.circle"))
+                      : (item.isBlocking ? "exclamationmark.circle.fill" : "minus.circle.fill"))
                     .foregroundStyle(item.isReady ? .green : (item.isBlocking ? .orange : .secondary))
                 Text(item.title).font(.subheadline.weight(.medium))
                 Spacer()
-                // 非阻塞项缺了只是少一类能力，不该显示成"缺失"吓人。
                 Text(item.isReady ? "就绪" : (item.isBlocking ? "缺失" : "可选·缺失"))
                     .font(.caption.weight(.medium))
                     .foregroundStyle(item.isReady ? .green : (item.isBlocking ? .orange : .secondary))
@@ -207,28 +207,12 @@ struct OnboardingView: View {
 
     private var footer: some View {
         VStack(spacing: 10) {
-            // 只有可选项缺失时，允许直接启动 ——
-            // 引擎不依赖工作环境，把用户关在这里毫无意义。
-            if report.canStart {
-                Button(action: onRecheck) {
-                    Text("仍然启动（无 shell 工具）").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
+            Button(action: onRecheck) {
+                Text("重新检查").frame(maxWidth: .infinity)
             }
+            .buttonStyle(.borderedProminent)
 
-            // SwiftUI 的 buttonStyle 是泛型，两个分支类型不同，不能写三元；用 if 分。
-            if report.canStart {
-                Button(action: onRecheck) {
-                    Text("重新检查").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-            } else {
-                Button(action: onRecheck) {
-                    Text("重新检查").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-            }
-            Text("提示：补齐产物后需重新安装 App（资源在打包时写入）。")
+            Text("提示：补齐产物后需要重新安装 App（资源在打包时写入）。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

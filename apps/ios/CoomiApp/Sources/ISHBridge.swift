@@ -1,234 +1,364 @@
 import Foundation
 
-/// 内嵌 iSH Linux 内核的 Swift 封装 —— **只提供"工作环境"**。
+/// 内嵌 Linux 工作环境（iSH）的 Swift 封装。
 ///
-/// # 职责边界（这一版重新划分过）
+/// # 架构定位（重要，别搞错）
+/// 这里**只负责工作环境**，不跑引擎。
 ///
-/// | 要做的事 | 由谁负责 |
-/// |---|---|
-/// | 会话/记忆/模型/HTTP/文件 | **Rust 引擎**（原生 aarch64，见 `EngineController`） |
-/// | shell / git / python 等命令 | **本文件（iSH）** |
-///
-/// 也就是说：iSH 在 iOS 上的角色 = **Android 上 proot 的角色**。
-/// 引擎不需要它也能跑，只有"要执行外部命令"时才用到。
-///
-/// # iSH 是什么
-/// 它不是「模拟器 App」，而是一个**跑在进程内的 Linux 内核实现**：
-///
-/// ```c
-/// xX_main_Xx(argc, argv, envp);              // 挂 /proc、/dev/pts，建设备节点
-/// do_mount(&procfs,   "proc",   "/proc",   "", 0);
-/// do_mount(&devptsfs, "devpts", "/dev/pts", "", 0);
-/// do_execve("/bin/sh", 3, argv, envp);       // 在"Linux"里 exec
-/// task_start(current);
+/// ```
+/// 安卓：原生引擎(libcoomi_engine.so, JNI) + proot 工作环境
+/// iOS ：原生引擎(libcoomi_ui.a, C ABI) + iSH 工作环境   ← 本文件是右半边
 /// ```
 ///
-/// 于是 App 进程内就有了 fork/exec 能力 —— iOS 沙箱本身禁止 fork 宿主程序，
-/// 但 iSH 的 fork 是**模拟实现**，不触碰系统调用，所以不受限制。
+/// 引擎由 `EngineController.swift` 通过 `coomi_start()` 在 App 进程内直接跑，
+/// **与 iSH 完全解耦**：引擎先起（原生，秒级），iSH 后起（可选）。
+/// iSH 起不来时引擎照常工作，只是 AI 不能执行 shell 命令。
 ///
-/// # 没链接 iSH 时
-/// `ish_support.c` 提供桩实现（`ish_available()` 返回 0），
-/// 本类会明确报"工作环境不可用"，而不是崩溃。此时引擎仍能正常启动，
-/// 只是 shell 工具会失败。
+/// 本文件负责的是「给 AI 一个能执行 shell 命令的 Linux」——
+/// 也就是安卓上 proot 的角色。
+///
+/// # 为什么不直接调 ish_embed_*
+/// `ish_embed_*` 的结构体（`ish_embed_boot_opts_t` / `ish_embed_oneshot_result_t`）
+/// 字段较多且含 `const char *const *`、`size_t *` 输出参数。若在 Swift 里
+/// 手抄一份布局，一旦与 C 头不一致就是**静默的内存踩踏**（不报错、随机崩）。
+///
+/// 所以 C 侧（`ish_support.c`）提供 4 个扁平函数 `coomi_ish_*`，
+/// Swift 只碰 `void *` 和 `char *`。附带好处：桩实现（未链接 libish.a）
+/// 与真实现共用**同一份** Swift 代码，不需要 `#if`。
 final class ISHBridge {
 
     static let shared = ISHBridge()
 
-    /// App 沙箱内的「Linux 根」。
+    /// fakefs 根目录名（App 沙箱内）。
     ///
-    /// iSH 通过 `fs/real.c` 把这个宿主目录暴露成 Linux 的 `/`，
-    /// 所以 `Documents/linux/usr/bin` 在 Linux 眼里就是 `/usr/bin`。
+    /// iSH 的 fakefs 是一个**普通宿主目录**，里面放 `data/` 和 `meta.db`。
+    /// 换句话说：Linux 的 `/` 就是 `Documents/linux/`，双向可见。
     private let linuxRootName = "linux"
 
-    private var booted = false
-    private var lastShellTask: UnsafeMutableRawPointer?
+    private var instance: UnsafeMutableRawPointer?
+    private let lock = NSLock()
 
     private init() {}
 
-    /// 宿主侧 Linux 根目录。
+    /// 宿主侧 fakefs 根目录。
     var linuxRootURL: URL {
         let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent(linuxRootName, isDirectory: true)
     }
 
-    /// rootfs 是否就绪（`/bin/sh` 存在）。
+    /// rootfs 压缩包在 App 资源里的位置（若打包进来了）。
     ///
-    /// 这是"工作环境可用"的唯一判据 —— 没有 shell 什么都跑不了。
+    /// 我们不带完整 Alpine（几十 MB 会撑爆 IPA），只带**最小 userland**：
+    /// `/bin/sh` + 少量 coreutils + `git`。缺失时上层引导用户跳过。
+    var bundledRootfsURL: URL? {
+        Bundle.main.url(forResource: "linux-rootfs", withExtension: "tar.gz")
+    }
+
+    /// 是否已成功起内核。
+    var isBooted: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return instance != nil
+    }
+
+    /// 工作环境是否可用（静态库已链接 且 已 boot）。
     var isUserlandReady: Bool {
-        FileManager.default.fileExists(
-            atPath: linuxRootURL.appendingPathComponent("bin/sh").path
-        )
+        return ISHRuntime.available() && isBooted
     }
 
-    /// 把宿主路径换算成 iSH 里的 Linux 绝对路径。
-    static func guestPath(for hostURL: URL) -> String {
-        let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("linux", isDirectory: true).path
-        let full = hostURL.standardizedFileURL.path
-        if full.hasPrefix(root) {
-            let rest = String(full.dropFirst(root.count))
-            return rest.isEmpty ? "/" : rest
-        }
-        return full
-    }
+    // MARK: - 启动 / 关闭
 
-    // MARK: - 启动 Linux 运行时
-
-    /// 初始化 iSH 内核（等价于 iSH App 的 `main()`），幂等。
-    ///
-    /// 返回 nil 表示成功；否则是可展示的错误文本。
+    /// 起 iSH 内核，幂等。返回 nil 表示成功，否则是可展示的中文错误。
     func boot() -> String? {
-        if booted { return nil }
+        if isBooted { return nil }
 
         guard ISHRuntime.available() else {
-            return """
-            未链接 iSH 运行时（libish.a）。
-            工作环境（shell / git / python）将不可用；
-            引擎本身仍可正常运行（对话、记忆、文件读写都不受影响）。
-            """
+            return "未链接 iSH 运行时（libish.a）。引擎不受影响，只是没有 shell 工具。"
         }
 
+        // ① 准备 fakefs 根。iSH 要求该目录已存在且可写。
+        let root = linuxRootURL
         do {
-            try FileManager.default.createDirectory(
-                at: linuxRootURL, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         } catch {
             return "无法创建 Linux 根目录：\(error.localizedDescription)"
         }
 
-        // ① 告知 iSH 根在哪（必须在 boot 之前）。
-        let rootPath = linuxRootURL.path
-        let rootErr = rootPath.withCString { ish_set_root($0) }
-        if rootErr != 0 {
-            return "设置 Linux 根失败（errno=\(rootErr)）"
-        }
-
-        // ② 初始化内核：挂 /proc、/dev/pts，建设备节点。
-        let bootErr = ish_boot()
-        if bootErr != 0 {
-            return "初始化 Linux 内核失败（errno=\(bootErr)）"
-        }
-
-        booted = true
-        return nil
-    }
-
-    /// 解包 rootfs（`linux-rootfs.tar.gz` → Linux 根）。
-    ///
-    /// 返回 nil 表示成功或无需解包。
-    func installUserlandIfNeeded() -> String? {
-        let marker = linuxRootURL.appendingPathComponent(".rootfs-ok")
-        if FileManager.default.fileExists(atPath: marker.path) {
-            return nil
-        }
-        guard let archive = Bundle.main.url(forResource: "linux-rootfs", withExtension: "tar.gz") else {
-            return """
-            App 资源里没有 `linux-rootfs.tar.gz`。
-            工作环境（shell / git / python）将不可用；
-            引擎本身仍可正常运行。
-            """
-        }
-
-        guard boot() == nil else { return "Linux 运行时未就绪，无法解包 rootfs" }
-
-        let fm = FileManager.default
-        let linuxArchive = linuxRootURL.appendingPathComponent("rootfs.tar.gz")
-        try? fm.removeItem(at: linuxArchive)
-        do {
-            try fm.copyItem(at: archive, to: linuxArchive)
-        } catch {
-            return "拷贝 rootfs 失败：\(error.localizedDescription)"
-        }
-
-        let guestArchive = Self.guestPath(for: linuxArchive)
-        let guestRoot = Self.guestPath(for: linuxRootURL)
-        let errnoCode: Int32 = guestArchive.withCString { archivePtr in
-            guestRoot.withCString { rootPtr in
-                ishtool_extract_tar(archivePtr, rootPtr)
+        // ② 起内核。printk 走 stderr，真机上用 Console.app 看。
+        var inst: UnsafeMutableRawPointer?
+        let rc: Int32 = root.path.withCString { rootPtr in
+            "/".withCString { wdPtr in
+                coomi_ish_boot(rootPtr, wdPtr, &inst)
             }
         }
-        try? fm.removeItem(at: linuxArchive)
-        if errnoCode != 0 {
-            return "解包 rootfs 失败（iSH tar 返回 errno=\(errnoCode)）"
+
+        guard rc == 0, let inst else {
+            return "启动 Linux 内核失败：\(ISHStatus.describe(rc))"
         }
 
-        FileManager.default.createFile(atPath: marker.path, contents: Data())
+        lock.lock()
+        instance = inst
+        lock.unlock()
+
+        // ③ 首次启动铺 rootfs（需要内核已跑起来才能用 guest 的 tar）。
+        if let installErr = installUserlandIfNeeded() {
+            NSLog("[iSH] rootfs 安装失败: %@", installErr)
+            // 不算致命：内核可用，只是没有 /bin/sh。
+        }
         return nil
     }
 
-    // MARK: - 执行命令（引擎的 shell 工具会调这里）
+    /// 关闭内核（App 进后台或退出时调用）。
+    func shutdown() {
+        lock.lock()
+        let inst = instance
+        instance = nil
+        lock.unlock()
 
-    /// 在 Linux 侧执行一条命令。
+        guard let inst else { return }
+        _ = coomi_ish_shutdown(inst, 2000)
+    }
+
+    /// 内核路径无法启动时的静态文案（供 Readiness 用）。
+    static var unavailableReason: String {
+        "未链接 iSH 运行时（libish.a）。引擎不受影响，只是 AI 不能执行 shell 命令。"
+    }
+
+    // MARK: - 安装 userland
+
+    /// 首次启动时把 rootfs 解包到 fakefs 根，幂等。
     ///
-    /// 注意这是**异步**的：`do_execve` 之后 tar/命令还在跑，
-    /// 调用方需要自己等结果（或只看副作用）。真正的"同步返回输出"
-    /// 需要等 iSH 侧的 PTY 集成完成，目前阶段先保证命令能跑起来。
+    /// 用「哨兵文件」判断是否已装：比反复扫目录便宜，
+    /// 也比记 UserDefaults 可靠（用户可能删了 Documents）。
     @discardableResult
-    func run(command: String) throws -> UnsafeMutableRawPointer {
-        guard booted else { throw ISHError.notBooted }
-        var errorCode: Int32 = 0
-        let task = command.withCString { cmd -> UnsafeMutableRawPointer? in
-            ish_spawn_shell(cmd, &errorCode)
+    func installUserlandIfNeeded() -> String? {
+        let sentinel = linuxRootURL.appendingPathComponent(".userland-ok")
+        if FileManager.default.fileExists(atPath: sentinel.path) { return nil }
+
+        guard let archive = bundledRootfsURL else {
+            // 没有 rootfs 不算致命 —— 引擎照跑，只是 shell 工具不可用。
+            return nil
         }
-        guard let task else {
-            throw ISHError.spawnFailed(code: errorCode)
+
+        // iOS 不能 fork/exec 外部进程，所以解包只能让 guest 自己来。
+        // fakefs 根 = Linux 的 /，所以宿主 root/.rootfs.tar.gz 就是 guest /。
+        let guestTar = linuxRootURL.appendingPathComponent(".rootfs.tar.gz")
+        do {
+            if FileManager.default.fileExists(atPath: guestTar.path) {
+                try FileManager.default.removeItem(at: guestTar)
+            }
+            try FileManager.default.copyItem(at: archive, to: guestTar)
+        } catch {
+            return "复制 rootfs 失败：\(error.localizedDescription)"
         }
-        lastShellTask = task
-        return task
+
+        guard let result = run(["/bin/tar", "xzf", "/.rootfs.tar.gz", "-C", "/"],
+                               cwd: "/", timeoutMS: 120_000) else {
+            return "内核未启动，无法解包 rootfs"
+        }
+
+        guard result.exitCode == 0 else {
+            // guest 里可能还没有 /bin/tar（空 fakefs 就是这种情况）——
+            // 这是预期的，交给上层决定是否重铺。
+            return "解包 rootfs 失败（exit \(result.exitCode)）：\(result.stderrText)"
+        }
+
+        try? FileManager.default.removeItem(at: guestTar)
+        try? Data().write(to: sentinel)
+        return nil
     }
 
-    /// 中止最近一次命令（SIGTERM）。
-    func terminateLastCommand() {
-        guard let task = lastShellTask else { return }
-        ish_kill_task(task, 15)
-        lastShellTask = nil
+    // MARK: - 执行命令
+
+    struct CommandResult {
+        let exitCode: Int32
+        let stdout: Data
+        let stderr: Data
+        let timedOut: Bool
+
+        var stdoutText: String { String(decoding: stdout, as: UTF8.self) }
+        var stderrText: String { String(decoding: stderr, as: UTF8.self) }
+    }
+
+    /// 在 Linux 里跑一条命令，同步等结果。
+    ///
+    /// 这是引擎 shell 工具的底层实现（对应安卓 proot 的 run_oneshot）。
+    ///
+    /// - Parameters:
+    ///   - argv: 命令与参数，**不要**自己加 `/bin/sh -c`；
+    ///           需要 shell 语义时显式传 `["/bin/sh","-c", cmd]`。
+    ///   - cwd: guest 内工作目录，nil = `/`。
+    ///   - timeoutMS: 超时毫秒；0 = 不限（不推荐，命令卡死会拖住线程）。
+    func run(_ argv: [String], cwd: String? = nil, timeoutMS: UInt32 = 60_000) -> CommandResult? {
+        lock.lock()
+        let inst = instance
+        lock.unlock()
+        guard let inst else { return nil }
+
+        // ① argv 转 C 字符串数组（NULL 结尾）。
+        //    每个 CString 必须活到调用结束，所以先用数组持有、再取指针。
+        let cstrings: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) }
+        defer { cstrings.forEach { free($0) } }
+
+        var argvPtrs: [UnsafePointer<CChar>?] = cstrings.map { $0.map { UnsafePointer($0) } }
+        argvPtrs.append(nil)
+
+        var exitCode: Int32 = 0
+        var signal: Int32 = 0
+        var timedOut: Int32 = 0
+        var outBuf: UnsafeMutablePointer<CChar>?
+        var outLen: Int = 0
+        var errBuf: UnsafeMutablePointer<CChar>?
+        var errLen: Int = 0
+
+        let run: (UnsafePointer<CChar>?) -> Int32 = { cwdPtr in
+            argvPtrs.withUnsafeBufferPointer { argvBuf in
+                coomi_ish_run(
+                    inst,
+                    argvBuf.baseAddress,
+                    cwdPtr,
+                    timeoutMS,
+                    &exitCode,
+                    &signal,
+                    &timedOut,
+                    &outBuf,
+                    &outLen,
+                    &errBuf,
+                    &errLen
+                )
+            }
+        }
+
+        let rc: Int32 = cwd.map { $0.withCString { run($0) } } ?? run(nil)
+
+        defer {
+            coomi_ish_free(outBuf)
+            coomi_ish_free(errBuf)
+        }
+
+        guard rc == 0 else {
+            NSLog("[iSH] run 失败: %@ argv=%@", ISHStatus.describe(rc), argv.joined(separator: " "))
+            return CommandResult(
+                exitCode: -1,
+                stdout: Data(),
+                stderr: Data(("iSH error: " + ISHStatus.describe(rc)).utf8),
+                timedOut: rc == ISHStatus.ERR_TIMEOUT
+            )
+        }
+
+        let out = outBuf.map { Data(bytes: $0, count: outLen) } ?? Data()
+        let err = errBuf.map { Data(bytes: $0, count: errLen) } ?? Data()
+        return CommandResult(
+            exitCode: exitCode,
+            stdout: out,
+            stderr: err,
+            timedOut: timedOut != 0
+        )
+    }
+
+    /// 用 `/bin/sh -c` 跑一串 shell 命令（需要管道/重定向时用）。
+    func runShell(_ command: String, cwd: String? = nil, timeoutMS: UInt32 = 60_000) -> CommandResult? {
+        return run(["/bin/sh", "-c", command], cwd: cwd, timeoutMS: timeoutMS)
+    }
+
+    /// guest 路径 → 宿主 URL。
+    ///
+    /// fakefs 根就是宿主 `Documents/linux`，所以 `/usr/bin/git` → `<root>/usr/bin/git`。
+    /// 需要直接读写 guest 文件（不走 shell）时用。
+    func hostURL(forGuestPath path: String) -> URL {
+        let trimmed = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        return linuxRootURL.appendingPathComponent(trimmed)
     }
 }
 
-enum ISHError: LocalizedError {
-    case notBooted
-    case spawnFailed(code: Int32)
-
-    var errorDescription: String? {
-        switch self {
-        case .notBooted:
-            return "Linux 工作环境尚未初始化"
-        case let .spawnFailed(code):
-            return "启动命令失败（errno=\(code)）"
-        }
-    }
-}
-
-// MARK: - iSH C 接口声明
+// MARK: - C ABI 声明
 //
-// 由 `ish_support.c` 提供。集中在这里，便于核对签名。
-// 返回值约定：0 = 成功，非 0 = errno。
+// 与 `include/ishembed.h`（ABI v1）对应的扁平包装，实现在 `ish_support.c`。
+// 刻意保持「指针进、指针出」，不让 Swift 看见 iSH 的结构体。
 
-@_silgen_name("ish_set_root")
-private func ish_set_root(_ path: UnsafePointer<CChar>) -> Int32
-
-@_silgen_name("ish_boot")
-private func ish_boot() -> Int32
-
-@_silgen_name("ish_mount_pseudo_filesystems")
-private func ish_mount_pseudo_filesystems() -> Int32
-
-@_silgen_name("ish_spawn_shell")
-private func ish_spawn_shell(
-    _ command: UnsafePointer<CChar>,
-    _ errorOut: UnsafeMutablePointer<Int32>
-) -> UnsafeMutableRawPointer?
-
-@_silgen_name("ish_kill_task")
-private func ish_kill_task(_ task: UnsafeMutableRawPointer, _ signal: Int32)
-
-@_silgen_name("ishtool_extract_tar")
-private func ishtool_extract_tar(
-    _ archive: UnsafePointer<CChar>,
-    _ destination: UnsafePointer<CChar>
+@_silgen_name("coomi_ish_boot")
+private func coomi_ish_boot(
+    _ rootfs: UnsafePointer<CChar>,
+    _ workdir: UnsafePointer<CChar>?,
+    _ outInstance: UnsafeMutablePointer<UnsafeMutableRawPointer?>
 ) -> Int32
 
-/// iSH 可用性的共享入口（供 Readiness 等多处调用）。
+@_silgen_name("coomi_ish_run")
+private func coomi_ish_run(
+    _ instance: UnsafeMutableRawPointer,
+    _ argv: UnsafePointer<UnsafePointer<CChar>?>?,
+    _ cwd: UnsafePointer<CChar>?,
+    _ timeoutMS: UInt32,
+    _ outExitCode: UnsafeMutablePointer<Int32>,
+    _ outSignal: UnsafeMutablePointer<Int32>,
+    _ outTimedOut: UnsafeMutablePointer<Int32>,
+    _ outStdout: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
+    _ outStdoutLen: UnsafeMutablePointer<Int>,
+    _ outStderr: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
+    _ outStderrLen: UnsafeMutablePointer<Int>
+) -> Int32
+
+@_silgen_name("coomi_ish_free")
+private func coomi_ish_free(_ p: UnsafeMutableRawPointer?)
+
+@_silgen_name("coomi_ish_shutdown")
+private func coomi_ish_shutdown(_ instance: UnsafeMutableRawPointer, _ graceMS: UInt32) -> Int32
+
+/// iSH C 接口的共享声明。
+///
+/// 集中放这里的原因：`ish_available()` 被**多个** Swift 文件用
+/// （ISHBridge 启动、Readiness 就绪诊断）。声明散落且标 private 时，
+/// 另一个文件会 "cannot find xxx in scope" —— CI 上真实踩过这个坑。
 enum ISHRuntime {
+    /// 是否链接了 iSH 运行时（未链接时 C 侧桩实现返回 false）。
     @_silgen_name("ish_available")
     static func available() -> Bool
+}
+
+/// 状态码，与 `ishembed.h` 的 `ish_embed_status_t` 一致。
+enum ISHStatus {
+    static let OK: Int32 = 0
+    static let ERR_BOOT: Int32 = -1
+    static let ERR_MOUNT: Int32 = -2
+    static let ERR_BECOME_INIT: Int32 = -3
+    static let ERR_STDIO: Int32 = -4
+    static let ERR_CHDIR: Int32 = -5
+    static let ERR_EXECVE: Int32 = -6
+    static let ERR_PIPE: Int32 = -7
+    static let ERR_THREAD: Int32 = -8
+    static let ERR_NOT_RUNNING: Int32 = -9
+    static let ERR_ALREADY_BOOTED: Int32 = -10
+    static let ERR_PROTOCOL: Int32 = -11
+    static let ERR_TIMEOUT: Int32 = -12
+    static let ERR_INVALID_ARG: Int32 = -13
+    static let ERR_NO_SESSION: Int32 = -14
+    static let ERR_SUPERVISOR: Int32 = -15
+    static let ERR_OOM: Int32 = -16
+    static let ERR_BROKEN_PIPE: Int32 = -17
+    static let ERR_INTERNAL: Int32 = -99
+
+    static func describe(_ code: Int32) -> String {
+        switch code {
+        case OK: return "成功"
+        case ERR_BOOT: return "内核启动失败(-1)"
+        case ERR_MOUNT: return "fakefs 挂载失败(-2)"
+        case ERR_BECOME_INIT: return "become_first_process 失败(-3)"
+        case ERR_STDIO: return "stdio 安装失败(-4)"
+        case ERR_CHDIR: return "切换目录失败(-5)"
+        case ERR_EXECVE: return "supervisor exec 失败(-6)"
+        case ERR_PIPE: return "管道创建失败(-7)"
+        case ERR_THREAD: return "线程创建失败(-8)"
+        case ERR_NOT_RUNNING: return "内核未运行(-9)"
+        case ERR_ALREADY_BOOTED: return "内核已启动(-10)"
+        case ERR_PROTOCOL: return "协议错误(-11)"
+        case ERR_TIMEOUT: return "超时(-12)"
+        case ERR_INVALID_ARG: return "参数非法(-13)"
+        case ERR_NO_SESSION: return "会话不存在(-14)"
+        case ERR_SUPERVISOR: return "supervisor 报错(-15)"
+        case ERR_OOM: return "内存不足(-16)"
+        case ERR_BROKEN_PIPE: return "管道断裂(-17)"
+        case ERR_INTERNAL: return "内部错误(-99)"
+        default: return "未知错误(\(code))"
+        }
+    }
 }

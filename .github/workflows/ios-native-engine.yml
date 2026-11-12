@@ -43,15 +43,35 @@ jobs:
 
       - name: 自检产物
         run: |
+          set -o pipefail
           LIB=apps/coomi-rs/target/aarch64-apple-ios/release/libcoomi_ui.a
           ls -la "$LIB"
           file "$LIB"
           # 必须是 arm64 静态库
           file "$LIB" | grep -qi "arm64\|aarch64" || { echo "::error::不是 arm64 产物"; exit 1; }
-          # C ABI 符号必须在（Swift 靠它们启动引擎）
-          nm -gU "$LIB" 2>/dev/null | grep -E "_coomi_(start|port|version)" || {
-            echo "::warning::未找到 coomi_* 符号，检查 #[unsafe(no_mangle)]"
-          }
+
+          # C ABI 符号必须在（Swift 靠它们启动引擎）。
+          # 不能用 macOS 自带 nm：rustc 1.99 带 LLVM 23 的 DWARF，
+          # Xcode 16.4 的 cctools nm 只认到 LLVM 17，会报
+          # "Unknown attribute kind (102)"。用与 rustc 同代的 llvm-nm。
+          rustup component add llvm-tools-preview
+          LLVM_NM="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-nm"
+          test -x "$LLVM_NM" || LLVM_NM="$(rustup which --component llvm-tools-preview llvm-nm 2>/dev/null)" || true
+
+          ok=1
+          for sym in coomi_start coomi_port coomi_version; do
+            # 判据一：llvm-nm 能读到符号表
+            if [ -x "$LLVM_NM" ] && "$LLVM_NM" "$LIB" 2>/dev/null | grep -qw "$sym"; then
+              echo "✅ llvm-nm: $sym"
+            # 判据二：纯字节搜索（符号名一定在字符串表里）
+            elif strings -a "$LIB" | grep -qx "_$sym"; then
+              echo "✅ strings: _$sym"
+            else
+              echo "::error::缺少 C ABI 符号 $sym（检查 #[unsafe(no_mangle)]）"
+              ok=0
+            fi
+          done
+          [ "$ok" = 1 ] || exit 1
           echo "✅ 静态库自检通过"
 
       - uses: actions/upload-artifact@v4

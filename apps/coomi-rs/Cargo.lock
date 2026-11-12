@@ -625,17 +625,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "coomi-jni"
-version = "2.1.0"
-dependencies = [
- "chrono",
- "coomi-ui",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "coomi-security"
 version = "2.1.0"
 dependencies = [

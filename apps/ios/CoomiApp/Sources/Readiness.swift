@@ -2,125 +2,154 @@ import Foundation
 
 /// 首次启动的就绪诊断。
 ///
-/// # 检查项随架构调整过
+/// # 为什么需要它
+/// iOS 侧要跑起来，需要的东西分两类：
 ///
-/// **旧**（引擎跑在 iSH 里）：需要 libish.a + rootfs + i686 引擎三样。
+/// **阻塞项**（缺了引擎就起不来）
+///   1. **引擎静态库** —— `libcoomi_ui.a`，编译期链接，运行期用 `coomi_start()` 起
+///   2. **可写的 home / workspace 目录**
 ///
-/// **新**（引擎原生）：
-/// - **引擎**：编译期链接进主二进制，**运行时不可能缺失** —— 所以不再检查；
-/// - **前端产物**：需要在 bundle 里（决定界面能否显示）；
-/// - **工作环境（iSH + rootfs）**：**可选**，缺了只是 shell 工具不可用，
-///   对话/记忆/文件读写全部照常。
+/// **可选·缺失**（缺了照样能用，只是功能变少）
+///   3. **iSH 运行时** —— `libish.a` + rootfs，决定 AI 能不能执行 shell 命令
 ///
-/// 这个区分很重要：早期版本把「工作环境缺失」当成致命错误拦在启动前，
-/// 但引擎根本不依赖它 —— 那会让一个本可正常使用的 App 卡在引导页。
+/// # 为什么这么分
+/// 早期版本把 iSH 也当阻塞项，导致「没链接 libish 就完全不可用」。
+/// 但 iSH 在架构里等价于安卓的 **proot** —— 它只是**工作环境**，
+/// 而引擎（`EngineController`）是原生 aarch64，压根不依赖它。
+/// 把它们分成两条独立路径后：iSH 缺失 → 只剩 shell 工具不可用，对话/记忆/联网全正常。
+///
+/// # 关于「引擎二进制」
+/// 旧版这里检查的是一个 i686 Linux ELF 资源文件 —— 那是「把引擎塞进 iSH 跑」的
+/// 错误架构留下的。正确做法是引擎编成 aarch64-apple-ios 静态库**链进 App**，
+/// 所以这里改成检查 C 符号是否可用（`coomi_start` 存在 = 静态库链进来了）。
 struct ReadinessReport {
     struct Item {
         let id: String
         let title: String
         let detail: String
         let isReady: Bool
-        /// 缺失时怎么补；nil 表示无需操作。
-        let remedy: String?
-        /// 是否是**致命**项（缺失则引擎起不来）。
-        /// 非致命项只影响部分能力，不该拦住启动。
+        /// 缺失是否阻止启动。
+        ///
+        /// `false` 的项在界面上显示成「可选·缺失」，且不参与 `canStart` 判定。
         let isBlocking: Bool
+        /// 缺失时怎么补（为空表示无需操作）。
+        let remedy: String?
     }
 
     let items: [Item]
 
-    /// 致命项全部就绪即可启动。
-    var canStart: Bool {
-        items.filter(\.isBlocking).allSatisfy(\.isReady)
-    }
+    /// 全部**阻塞项**就绪才允许启动引擎。
+    var canStart: Bool { items.filter(\.isBlocking).allSatisfy(\.isReady) }
 
-    /// 全部就绪（含可选项）。
-    var allReady: Bool { items.allSatisfy(\.isReady) }
+    /// 可选但缺失的项。
+    var degraded: [Item] { items.filter { !$0.isBlocking && !$0.isReady } }
 
-    /// 一句话摘要。
+    /// 一句话摘要，供首启页顶部显示。
     var summary: String {
-        if allReady { return "全部就绪，可以启动引擎。" }
-        if canStart { return "引擎可以启动；工作环境（shell 等）暂不可用。" }
-        let missing = items.filter { $0.isBlocking && !$0.isReady }
-        return "缺少 \(missing.count) 项必要组件，无法启动引擎。"
+        if canStart {
+            if degraded.isEmpty { return "运行时已就绪，可以启动引擎。" }
+            let names = degraded.map(\.title).joined(separator: "、")
+            return "可以启动引擎；另有可选组件缺失（\(names)）。"
+        }
+        let n = items.filter(\.isBlocking).filter { !$0.isReady }.count
+        return "缺少 \(n) 项必需组件，引擎暂时无法启动。"
     }
 }
 
 enum ReadinessChecker {
 
-    /// 逐项检查。纯本地判断，不发网络请求。
+    /// 逐项检查。纯本地判断，不发网络请求，可在 `onAppear` 直接调用。
     static func check() -> ReadinessReport {
         var items: [ReadinessReport.Item] = []
 
-        // ① 引擎：编译期链接。
+        // ① 引擎静态库：`coomi_version()` 能调到就说明链进来了。
         //
-        // 这里**没有运行时文件可查** —— 符号在启动时就已链接进主二进制。
-        // 若真的没链接，App 根本起不来（缺符号会在 dyld 阶段报错），
-        // 不会走到这个界面。所以固定为就绪，只把版本号显示出来供诊断。
-        let version = String(cString: coomi_version())
+        //    直接调而不是查文件：静态库是编译期产物，运行期无文件可查。
+        //    这个函数极轻（返回一个常量指针），不会阻塞。
+        let engineLinked = EngineRuntime.isLinked
         items.append(.init(
             id: "engine",
-            title: "Coomi 引擎（原生 ARM64）",
-            detail: "已链接进 App，版本 \(version)。随 App 启动，无需额外部署。",
-            isReady: true,
-            remedy: nil,
-            isBlocking: true
+            title: "Coomi 引擎（原生静态库）",
+            detail: engineLinked
+                ? "已链接 libcoomi_ui.a，引擎将在进程内以 aarch64 原生运行。"
+                : "未链接 libcoomi_ui.a。App 无法启动引擎。",
+            isReady: engineLinked,
+            isBlocking: true,
+            remedy: engineLinked ? nil :
+                "需要把 Rust 引擎编成 iOS 静态库并链进 target：\n"
+                + "① 在 macOS 上 `rustup target add aarch64-apple-ios`\n"
+                + "② `cargo build -p coomi-ui --target aarch64-apple-ios --release`\n"
+                + "③ 把 libcoomi_ui.a 放到 apps/ios/ThirdParty/engine/\n"
+                + "（CI 的 engine job 会自动做这三步）"
         ))
 
-        // ② 前端产物：决定界面能否显示。
-        let webIndex = EngineController.homeURL.appendingPathComponent("web/index.html")
-        let bundledWeb = Bundle.main.url(forResource: "web", withExtension: nil)
-        let webReady = bundledWeb != nil
-            || FileManager.default.fileExists(atPath: webIndex.path)
+        // ② home 目录可写：引擎要建配置、记忆、会话库。
+        let homeOK = checkHomeWritable()
         items.append(.init(
-            id: "web",
-            title: "界面资源",
-            detail: webReady
-                ? "前端产物已打包进 App。"
-                : "App 里没有前端产物，界面将无法显示。",
-            isReady: webReady,
-            remedy: webReady ? nil :
-                "在 CI/本地执行：\n"
-                + "  cd apps/web && npm ci && npx vite build\n"
-                + "  cp -R dist/. ../ios/CoomiApp/Resources/web/",
-            isBlocking: true
+            id: "home",
+            title: "数据目录",
+            detail: homeOK
+                ? "Documents/coomi-home 可写。"
+                : "无法创建或写入 Documents/coomi-home。",
+            isReady: homeOK,
+            isBlocking: true,
+            remedy: homeOK ? nil : "通常是存储空间不足。清理后重启 App。"
         ))
 
-        // ③ iSH 运行时：**可选**。
+        // ③ iSH 运行时：可选。
         let ishReady = ISHRuntime.available()
         items.append(.init(
             id: "ish",
-            title: "Linux 工作环境（iSH）",
+            title: "iSH 运行时（shell 工具）",
             detail: ishReady
-                ? "iSH 内核已链接。"
-                : "未链接 iSH。shell / git / python 类工具不可用，其余功能正常。",
+                ? "已链接 libish，Linux 内核可用。"
+                : "未链接 libish。AI 不能执行 shell 命令，其余功能正常。",
             isReady: ishReady,
+            isBlocking: false,
             remedy: ishReady ? nil :
-                "这是**可选**组件（对应安卓的 proot）。\n"
-                + "需要 shell 工具时：在 Mac 上编出 libish.a，\n"
-                + "放进 ThirdParty/ish/build/ 并在 project.yml 里打开 -lish。",
-            isBlocking: false
+                "需要把 iSH 编成静态库并加入工程：\n"
+                + "① `git clone --recursive https://github.com/Lolendor/ish-arm64-pkg`\n"
+                + "② `xcodebuild -scheme IshEmbed -sdk iphoneos -arch arm64`\n"
+                + "③ 把 libish.a 放入 apps/ios/ThirdParty/ish/，"
+                + "并把 build setting 的 COOMI_HAS_ISH 设为 1"
         ))
 
-        // ④ rootfs：同样**可选**，且只有链接了 iSH 才有意义。
-        let userlandReady = ISHBridge.shared.isUserlandReady
-        items.append(.init(
-            id: "userland",
-            title: "Linux 用户态（rootfs）",
-            detail: userlandReady
-                ? "rootfs 已就绪，/bin/sh 存在。"
-                : "未安装 rootfs。工作环境不可用。",
-            isReady: userlandReady,
-            remedy: userlandReady ? nil :
-                "可选组件。需要时把 linux-rootfs.tar.gz 放进 CoomiApp/Resources/。\n"
-                + "运行 Scripts/build-ios-runtime.sh 可产出（只需 sh/git/python，不含引擎）。",
-            isBlocking: false
-        ))
+        // ④ Linux 用户态：可选，且只有链接了 iSH 才有意义。
+        if ishReady {
+            let rootfsReady = FileManager.default.fileExists(
+                atPath: ISHBridge.shared.linuxRootURL.appendingPathComponent("bin/sh").path
+            )
+            items.append(.init(
+                id: "rootfs",
+                title: "Linux 用户态（rootfs）",
+                detail: rootfsReady
+                    ? "rootfs 已解包，/bin/sh 存在。"
+                    : "尚未解包 rootfs，或解包不完整（缺少 /bin/sh）。",
+                isReady: rootfsReady,
+                isBlocking: false,
+                remedy: rootfsReady ? nil :
+                    "把 `linux-rootfs.tar.gz` 放进 CoomiApp/Resources，"
+                    + "App 首次启动会在 guest 内自动解包。"
+            ))
+        }
 
         return ReadinessReport(items: items)
     }
-}
 
-// 引擎版本符号来自 Rust FFI。
-@_silgen_name("coomi_version")
-private func coomi_version() -> UnsafePointer<CChar>
+    /// 探一下 home 目录能不能写。
+    ///
+    /// 单纯 `isWritableFile` 在 iOS 上不可靠（沙箱容器可能刚建好），
+    /// 直接写一个探针文件更实在。
+    private static func checkHomeWritable() -> Bool {
+        let home = EngineController.homeURL
+        do {
+            try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+            let probe = home.appendingPathComponent(".write-probe")
+            try Data("ok".utf8).write(to: probe)
+            try? FileManager.default.removeItem(at: probe)
+            return true
+        } catch {
+            return false
+        }
+    }
+}
