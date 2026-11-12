@@ -230,6 +230,14 @@ struct TarGzExtractor {
             }
             let stream = UnsafeMutablePointer<compression_stream>.allocate(capacity: 1)
             defer { stream.deallocate() }
+            // COMPRESSION_ZLIB 在这里是「raw DEFLATE」，不是「带 zlib 头的流」。
+            //
+            // 这点容易搞错，本地实测过 fs.tar.gz 的 deflate 体：
+            //   前两字节 ec 7d → (0xec<<8|0x7d)=60541，60541 % 31 = 29 ≠ 0，
+            //   所以它没有 zlib 头，是 raw deflate。
+            //   node 里 inflateRawSync 成功解出 18,838,016 B，
+            //   而 inflateSync（按 zlib 解析）报 "incorrect header check"。
+            // gzip 头我们已经在上面的 gunzip 里手工剥掉了，所以这里正好对上。
             var status = compression_stream_init(stream, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB)
             guard status == COMPRESSION_STATUS_OK else {
                 throw TarGzError.inflateFailed("stream_init 失败 \(status.rawValue)")
@@ -239,18 +247,37 @@ struct TarGzExtractor {
             stream.pointee.src_ptr = srcBase
             stream.pointee.src_size = body.count
 
-            repeat {
+            // 循环到 END/ERROR 为止，而不是 while status == OK。
+            //
+            // 差别在于：dst 缓冲写满时 compression_stream_process 会返回 OK
+            // 让你继续取；但流结束时返回的是 END，此时**这一次**已经产出的
+            // 字节仍然在缓冲里，必须先 append 再退出。
+            // 写成 `repeat { ... } while status == OK` 时，END 那次虽然也
+            // append 了（因为 append 在判断之前），但只要有一次 OK 之后
+            // src 被吃光却没再调用，尾部就会静默丢失。
+            // 这里显式循环 + 每次先取 produced，最后再判状态。
+            while true {
                 stream.pointee.dst_ptr = dst
                 stream.pointee.dst_size = chunk
                 status = compression_stream_process(stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
+
                 let produced = chunk - stream.pointee.dst_size
                 if produced > 0 {
                     out.append(dst, count: produced)
                 }
+
                 if status == COMPRESSION_STATUS_ERROR {
                     throw TarGzError.inflateFailed("解压出错")
                 }
-            } while status == COMPRESSION_STATUS_OK
+                if status == COMPRESSION_STATUS_END {
+                    break
+                }
+                // status == OK：还有数据，继续。若这一轮既没产出也没消耗，
+                // 说明卡住了，避免死循环。
+                if produced == 0 && stream.pointee.src_size == 0 {
+                    break
+                }
+            }
         }
 
         guard !out.isEmpty else { throw TarGzError.inflateFailed("解出 0 字节") }
