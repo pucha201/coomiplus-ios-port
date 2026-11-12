@@ -62,6 +62,9 @@ targets:
         buildPhase: resources
         excludes:
           - "web/**"
+          # README.md 是给人看的说明，不该占 App 包体积。
+          - "README.md"
+          - "*.md"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.coomi.ios
