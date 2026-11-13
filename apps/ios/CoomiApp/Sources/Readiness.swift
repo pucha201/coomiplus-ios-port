@@ -102,34 +102,62 @@ enum ReadinessChecker {
             id: "ish",
             title: "iSH 运行时（shell 工具）",
             detail: ishReady
-                ? "已链接 libish，Linux 内核可用。"
-                : "未链接 libish。AI 不能执行 shell 命令，其余功能正常。",
+                ? "已链接 libIshKernel.a，Linux 内核可用。"
+                : "未链接 libIshKernel.a。AI 不能执行 shell 命令，其余功能正常。",
             isReady: ishReady,
             isBlocking: false,
             remedy: ishReady ? nil :
                 "需要把 iSH 编成静态库并加入工程：\n"
                 + "① `git clone --recursive https://github.com/Lolendor/ish-arm64-pkg`\n"
                 + "② `xcodebuild -scheme IshEmbed -sdk iphoneos -arch arm64`\n"
-                + "③ 把 libish.a 放入 apps/ios/ThirdParty/ish/，"
+                + "③ 把 libIshKernel.xcframework 放入 apps/ios/ThirdParty/ish/，"
                 + "并把 build setting 的 COOMI_HAS_ISH 设为 1"
         ))
 
         // ④ Linux 用户态：可选，且只有链接了 iSH 才有意义。
         if ishReady {
-            let rootfsReady = FileManager.default.fileExists(
-                atPath: ISHBridge.shared.linuxRootURL.appendingPathComponent("bin/sh").path
-            )
+            // 路径换算：fakefs 里 guest 的 `/x` 落在宿主 `<root>/data/x`。
+            // （实测归档内部是 `fs/data/bin/sh`，解包提升一层后 = `<root>/data/bin/sh`。）
+            //
+            // 老写法查的是 `<root>/bin/sh` —— 那个路径**永远不存在**，
+            // 于是即使 rootfs 已经完整铺好，这一项也一直报「缺失」。
+            let root = ISHBridge.shared.linuxRootURL
+            let fm = FileManager.default
+            let shell = fm.fileExists(atPath: root.appendingPathComponent("data/bin/sh").path)
+            let supervisor = fm.fileExists(atPath: root.appendingPathComponent("data/sbin/ishsv").path)
+            let meta = fm.fileExists(atPath: root.appendingPathComponent("meta.db").path)
+            let rootfsReady = shell && supervisor && meta
+
+            var missing: [String] = []
+            if !meta { missing.append("meta.db") }
+            if !supervisor { missing.append("data/sbin/ishsv") }
+            if !shell { missing.append("data/bin/sh") }
+
             items.append(.init(
                 id: "rootfs",
                 title: "Linux 用户态（rootfs）",
                 detail: rootfsReady
-                    ? "rootfs 已解包，/bin/sh 存在。"
-                    : "尚未解包 rootfs，或解包不完整（缺少 /bin/sh）。",
+                    ? "fakefs 已铺好：meta.db + /sbin/ishsv + /bin/sh 都在。"
+                    : "尚未解包，或解包不完整（缺 \(missing.joined(separator: "、"))）。",
                 isReady: rootfsReady,
                 isBlocking: false,
                 remedy: rootfsReady ? nil :
-                    "把 `linux-rootfs.tar.gz` 放进 CoomiApp/Resources，"
-                    + "App 首次启动会在 guest 内自动解包。"
+                    "打包时把 `linux-rootfs.tar.gz` 放进 CoomiApp/Resources，"
+                    + "App 首次启动会在宿主侧解包（boot 之前必须铺好）。"
+            ))
+
+            // ⑤ boot 的实测结果：这是整个集成里唯一无法靠静态检查证明的一环。
+            let report = ISHBridge.shared.lastBootReport
+            items.append(.init(
+                id: "ish-boot",
+                title: "Linux 内核启动（实测）",
+                detail: report?.summary ?? "尚未尝试启动（App 启动时会自动跑一次）。",
+                isReady: report?.isFullyWorking ?? false,
+                isBlocking: false,
+                remedy: (report?.isFullyWorking ?? false) ? nil :
+                    "在启动页/iSH 诊断卡上展开「详情」可看到 boot 返回码与自检输出；"
+                    + "常见：-2 挂载失败(fakefs 格式)、-6 supervisor 起不来、"
+                    + "-12 超时、-15 supervisor 报错。"
             ))
         }
 

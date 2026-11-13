@@ -38,6 +38,13 @@ final class ISHBridge {
     private var instance: UnsafeMutableRawPointer?
     private let lock = NSLock()
 
+    /// 最近一次解包写入了多少条目（0 = 复用了已有 fakefs，没解包）。
+    /// 供诊断界面显示 —— 「856 个条目」是 fakefs 铺好的直接证据。
+    private(set) var lastExtractCount = 0
+
+    /// 最近一次 `bootWithReport()` 的结果，供 Readiness 复用（不重复 boot）。
+    private(set) var lastBootReport: ISHBootReport?
+
     private init() {}
 
     /// 宿主侧 fakefs 根目录。
@@ -74,57 +81,18 @@ final class ISHBridge {
     }
 
     // MARK: - 启动 / 关闭
-
-    /// 起 iSH 内核，幂等。返回 nil 表示成功，否则是可展示的中文错误。
-    ///
-    /// 顺序很关键，别调换：
-    ///   ① 先在**宿主侧**把 fakefs 镜像铺到 linuxRootURL（要有 meta.db + data/）
-    ///   ② 再调 ish_embed_boot —— 它会挂载 meta.db 并把 /sbin/ishsv 拉成 PID1
-    ///
-    /// 之前这里是反的：先拿空目录 boot，boot 完再想用 guest 的 /bin/tar 解包。
-    /// 但空目录连挂载都过不去（没有 meta.db），更不会有 /bin/tar，
-    /// 于是必然死在 ISH_ERR_MOUNT(-2)，而错误又被当成「不算致命」吞掉。
-    func boot() -> String? {
-        if isBooted { return nil }
-
-        guard ISHRuntime.available() else {
-            return "未链接 iSH 运行时（libIshKernel.a）。引擎不受影响，只是没有 shell 工具。"
-        }
-
-        // ① 铺 fakefs。必须在 boot 之前。
-        if let prepErr = prepareFakefs() {
-            return prepErr
-        }
-
-        let root = linuxRootURL
-
-        // ② 起内核。printk 走 stderr，真机上用 Console.app 看。
-        var inst: UnsafeMutableRawPointer?
-        let rc: Int32 = root.path.withCString { rootPtr in
-            "/".withCString { wdPtr in
-                coomi_ish_boot(rootPtr, wdPtr, &inst)
-            }
-        }
-
-        guard rc == 0, let inst else {
-            return "启动 Linux 内核失败：\(ISHStatus.describe(rc))"
-        }
-
-        lock.lock()
-        instance = inst
-        lock.unlock()
-
-        // ③ 自检：真跑一条命令，确认 userland 可用。
-        //    「boot 返回 0」只说明内核起来了，不代表能执行命令 ——
-        //    supervisor 没起来 / /bin/sh 缺失都会在这条上暴露。
-        if let probeErr = probeUserland() {
-            NSLog("[iSH] userland 自检失败: %@", probeErr)
-            // 不 return：内核可用，让上层决定是否降级。
-        } else {
-            NSLog("[iSH] userland 自检通过")
-        }
-        return nil
-    }
+    //
+    // 顺序很关键，别调换：
+    //   ① 先在**宿主侧**把 fakefs 镜像铺到 linuxRootURL（要有 meta.db + data/）
+    //   ② 再调 ish_embed_boot —— 它会挂载 meta.db 并把 /sbin/ishsv 拉成 PID1
+    //
+    // 曾经这里是反的：先拿空目录 boot，boot 完再想用 guest 的 /bin/tar 解包。
+    // 但空目录连挂载都过不去（没有 meta.db），更不会有 /bin/tar，
+    // 于是必然死在 ISH_ERR_MOUNT(-2)，而错误又被当成「不算致命」吞掉。
+    //
+    // 启动入口只有 `bootWithReport()` 一个。旧版另有一个只回错误字符串的
+    // `boot()`，和它并行了 prepareFakefs + boot + 自检三件事，却从未被调用 ——
+    // 两份实现并存的结果是改了一份、另一份静默漂移。已删除。
 
     /// 把 bundled fakefs 镜像铺到 linuxRootURL。幂等（靠哨兵）。
     ///
@@ -136,9 +104,19 @@ final class ISHBridge {
         let metaDB = root.appendingPathComponent("meta.db")
         let dataDir = root.appendingPathComponent("data", isDirectory: true)
 
-        // 已有完整 fakefs 就直接用。
+        // 已有 fakefs：必须**连关键文件一起验**才算完整。
+        //
+        // 老写法只查 meta.db 与 data/ 两个路径就 return nil，于是：
+        // 首次解包若中途失败（留下 meta.db + 空 data/），第二次启动会判「已就绪」，
+        // 直接跳过下面 L182 起的硬断言 —— 损坏的 fakefs 被当成好的，
+        // boot 挂在 -2/-6 而原因看不出来。这里补上 supervisor 与 shell 的检查，
+        // 不完整就落到重新解包分支。
+        let supervisor = root.appendingPathComponent("data/sbin/ishsv")
+        let shell = root.appendingPathComponent("data/bin/sh")
         if FileManager.default.fileExists(atPath: metaDB.path),
-           FileManager.default.fileExists(atPath: dataDir.path) {
+           FileManager.default.fileExists(atPath: dataDir.path),
+           FileManager.default.fileExists(atPath: supervisor.path),
+           FileManager.default.fileExists(atPath: shell.path) {
             return nil
         }
 
@@ -161,6 +139,7 @@ final class ISHBridge {
         // 不依赖 guest，也不依赖系统 tar —— 那正是之前的死结。
         do {
             let n = try TarGzExtractor.extract(fileAt: archive, into: root)
+            lastExtractCount = n
             NSLog("[iSH] fakefs 解包完成，%d 个条目", n)
         } catch {
             return "解包 fakefs 失败：\(error.localizedDescription)"
@@ -205,18 +184,106 @@ final class ISHBridge {
     }
 
     /// 真跑一条命令确认 userland 能用。
-    private func probeUserland() -> String? {
-        guard let r = run(["/bin/sh", "-c", "echo coomi-ok; uname -s"],
-                          cwd: "/", timeoutMS: 15_000) else {
-            return "无法发起命令"
+    /// 起 iSH 内核并返回**结构化**结果（幂等）。
+    ///
+    /// 这是**唯一**的启动入口。它返回 `ISHBootReport` 而不是一个错误字符串，
+    /// 因为 iOS 上不能 fork/exec，用户也很难连电脑看 Console.app ——
+    /// 「走到哪一步、boot 返回码是多少、自检输出是什么」必须能显示在屏幕上。
+    ///
+    /// 流程：① 铺 fakefs（boot 前必须）→ ② 起内核 → ③ 跑 userland 自检。
+    func bootWithReport() -> ISHBootReport {
+        var report = ISHBootReport()
+        // 结果存下来：Readiness 会读它，避免为了显示诊断而重复 boot
+        // （重复 boot 会返回 -10 已启动，反而让诊断看起来像失败）。
+        defer { lastBootReport = report }
+        report.runtimeLinked = ISHRuntime.available()
+
+        guard report.runtimeLinked else {
+            report.stage = .notLinked
+            report.failureReason = "未链接 iSH 运行时（libIshKernel.a）"
+            return report
         }
-        if r.exitCode != 0 {
-            return "退出码 \(r.exitCode)：\(r.stderrText.prefix(200))"
+
+        // ① 铺 fakefs（必须在 boot 之前）。
+        let t0 = Date()
+        if let prepErr = prepareFakefs() {
+            report.stage = .prepareFailed
+            report.failureReason = prepErr
+            return report
         }
-        if !r.stdoutText.contains("coomi-ok") {
-            return "stdout 不含探针串：\(r.stdoutText.prefix(200))"
+        report.prepareMs = Int(Date().timeIntervalSince(t0) * 1000)
+        report.extractedEntries = lastExtractCount
+        report.fakefsReady = true
+        report.rootPath = linuxRootURL.path
+
+        // ② 若已 boot，复用实例，但**自检照样重跑**。
+        //
+        //    老写法在这里硬写 `probePassed = true` —— 那是**谎报**：
+        //    「已 boot」只说明内核实例在，不代表自检过了（自检可能因 /bin/sh 缺失失败）。
+        //    诊断界面存在的意义就是把这种情况暴露出来，不能在这里抹平。
+        //    重跑而不是复用旧结论：用户点「重新检查」时正是想知道「现在还行不行」。
+        if isBooted {
+            report.stage = .booted
+            runProbe(into: &report)
+            return report
         }
-        return nil
+
+        // ③ 起内核。
+        var inst: UnsafeMutableRawPointer?
+        let rc: Int32 = linuxRootURL.path.withCString { rootPtr in
+            "/".withCString { wdPtr in
+                coomi_ish_boot(rootPtr, wdPtr, &inst)
+            }
+        }
+
+        report.bootStatus = rc
+        guard rc == 0, let inst else {
+            report.stage = .bootFailed
+            report.failureReason = "启动 Linux 内核失败：\(ISHStatus.describe(rc))"
+            return report
+        }
+
+        lock.lock()
+        instance = inst
+        lock.unlock()
+        report.stage = .booted
+
+        // ④ 自检：真跑一条命令。boot 返回 0 只说明内核起来了，
+        //    不代表能执行命令 —— supervisor 没起来 / /bin/sh 缺失都在这一步暴露。
+        //    这是整个 iSH 集成里唯一没有被验证过的一环，所以输出要留着给人看。
+        runProbe(into: &report)
+        return report
+    }
+
+    /// 跑 userland 自检并把结果写进 [report]。
+    ///
+    /// 抽成方法是为了让幂等路径也能重跑：首次自检若失败（比如 fakefs 当时残缺），
+    /// 用户补好后再点「重新检查」，必须能重新得到结论 —— 而不是永远停在旧失败上。
+    private func runProbe(into report: inout ISHBootReport) {
+        let probe = run(["/bin/sh", "-c", "echo coomi-ok; uname -s"],
+                        cwd: "/", timeoutMS: 20_000)
+        guard let probe else {
+            report.stage = .probeFailed
+            report.probePassed = false
+            report.failureReason = "无法发起自检命令（内核实例不可用）"
+            NSLog("[iSH] userland 自检失败: 无法发起命令")
+            return
+        }
+
+        report.probeExitCode = probe.exitCode
+        report.probeStdout = probe.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
+        report.probeStderr = probe.stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
+        report.probePassed = probe.exitCode == 0 && probe.stdoutText.contains("coomi-ok")
+
+        if report.probePassed {
+            NSLog("[iSH] userland 自检通过: %@", report.probeStdout)
+        } else {
+            report.stage = .probeFailed
+            report.failureReason = probe.exitCode != 0
+                ? "自检退出码 \(probe.exitCode)：\(probe.stderrText.prefix(200))"
+                : "stdout 不含探针串：\(probe.stdoutText.prefix(200))"
+            NSLog("[iSH] userland 自检失败: %@", report.failureReason ?? "")
+        }
     }
 
     /// 关闭内核（App 进后台或退出时调用）。
@@ -393,6 +460,66 @@ enum ISHRuntime {
     /// 是否链接了 iSH 运行时（未链接时 C 侧桩实现返回 false）。
     @_silgen_name("ish_available")
     static func available() -> Bool
+}
+
+/// iSH 启动诊断报告。
+///
+/// # 为什么需要它
+/// `boot()` 只回一个错误串，看不出「走到哪一步」。iOS 又不能 fork/exec，
+/// 用户很难连电脑看 Console.app —— 所以每一步的结果都要能显示在屏幕上。
+///
+/// # 每一步都在验证什么
+/// | 阶段 | 验证的事实 |
+/// |---|---|
+/// | `.notLinked` | 静态库没链进来（`COOMI_HAS_ISH=0` 或漏了产物） |
+/// | `.prepareFailed` | fakefs 没铺好（缺 meta.db / ishsv / 解包失败） |
+/// | `.bootFailed` | `ish_embed_boot` 返回非 0，见 `bootStatus` |
+/// | `.probeFailed` | 内核起来了但命令跑不通（supervisor / /bin/sh 问题） |
+/// | `.booted` && `probePassed` | **全链路打通**：内核 + fakefs + userland 都能用 |
+struct ISHBootReport {
+    enum Stage: String {
+        case notLinked = "未链接 iSH"
+        case prepareFailed = "fakefs 准备失败"
+        case bootFailed = "内核启动失败"
+        case probeFailed = "userland 自检失败"
+        case booted = "内核已启动"
+
+        var label: String { rawValue }
+    }
+
+    var stage: Stage = .notLinked
+    var runtimeLinked = false
+    var fakefsReady = false
+    var rootPath = ""
+
+    /// 本次解包的条目数（0 = 复用已有 fakefs）。
+    var extractedEntries = 0
+    /// 铺 fakefs 耗时（毫秒）。
+    var prepareMs = 0
+
+    /// `coomi_ish_boot` 的原始返回码（0 = 成功）。
+    var bootStatus: Int32 = 0
+
+    var probeExitCode: Int32 = 0
+    var probeStdout = ""
+    var probeStderr = ""
+    var probePassed = false
+
+    var failureReason: String?
+
+    /// 全链路是否真的打通 —— 这是唯一有意义的成功判据。
+    var isFullyWorking: Bool { stage == .booted && probePassed }
+
+    /// 一行摘要，给界面顶部用。
+    var summary: String {
+        if isFullyWorking {
+            return "iSH 已启动，userland 自检通过（这是首次拿到运行时证据）。"
+        }
+        if let reason = failureReason {
+            return "\(stage.label)：\(reason)"
+        }
+        return stage.label
+    }
 }
 
 /// 状态码，与 `ishembed.h` 的 `ish_embed_status_t` 一致。

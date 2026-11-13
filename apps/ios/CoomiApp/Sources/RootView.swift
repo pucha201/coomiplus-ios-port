@@ -27,7 +27,44 @@ struct RootView: View {
     @StateObject private var engine = EngineController()
     @State private var loadError: String?
     @State private var readiness: ReadinessReport?
+    /// iSH 的启动结果。nil = 还没试过。
+    ///
+    /// 保留在 `@State` 而不是只 NSLog：iOS 上不能 fork/exec，用户也很难
+    /// 连电脑看 Console.app，所以 `ish_embed_boot` 到底成没成，
+    /// 必须能在屏幕上直接看到 —— 这是整个 iSH 集成唯一没验证过的一环。
+    @State private var ishReport: ISHBootReport?
+    /// iSH 是否正在启动（用于界面提示）。
+    @State private var ishStarting = false
     @Environment(\.scenePhase) private var scenePhase
+
+    /// 起 iSH 工作环境（可选路径，失败不影响引擎）。
+    ///
+    /// # 为什么放后台
+    /// 首次运行要解包 856 个文件的 fakefs，随后 `ish_embed_boot` 起来、
+    /// 再跑一条带 20s 超时的自检命令 —— 最坏情况会在主线程上卡二十几秒。
+    /// 在 `onAppear` 里同步做，界面会整个冻住，还有触发 watchdog 的风险。
+    /// 所以丢到后台队列，结果回主线程更新 `@State`。
+    ///
+    /// # 为什么用串行队列而不是 Task.detached
+    /// iSH 的 `ish_embed_*` 是同步 C 接口，内部自己管线程；调用方只需保证
+    /// **不并发调**（重复 boot 会返回 -10）。串行队列天然满足这一点，
+    /// 而且 `ISHBridge` 内部还有 NSLock 兜底。
+    private func startUserland() {
+        guard !ishStarting, ishReport == nil else { return }  // 只试一次
+        ishStarting = true
+
+        DispatchQueue(label: "coomi.ish.boot", qos: .userInitiated).async {
+            let report = ISHBridge.shared.bootWithReport()
+            DispatchQueue.main.async {
+                ishStarting = false
+                ishReport = report
+                // 诊断项里的「Linux 内核启动（实测）」要读 lastBootReport，
+                // boot 完成后必须重跑一次，否则界面停在「尚未尝试」。
+                readiness = ReadinessChecker.check()
+                NSLog("[iSH] boot 结果: %@", report.summary)
+            }
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -49,8 +86,26 @@ struct RootView: View {
                         actionTitle: "开始",
                         action: { engine.ensureRunning() }
                     )
+                    // iSH 结果直接摆在启动页：侧载后不用连电脑看日志，
+                    // 屏幕上就有「内核到底起没起来 + 自检输出是什么」。
+                    .overlay(alignment: .bottom) {
+                        if let ishReport {
+                            ISHReportCard(report: ishReport)
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 24)
+                        } else if ishStarting {
+                            // 后台在解包 fakefs + 起内核，这里给个可见信号，
+                            // 否则用户只看到一个静止页面，不知道有没有在做事。
+                            HStack(spacing: 8) {
+                                ProgressView().scaleEffect(0.8)
+                                Text("正在准备 Linux 工作环境…")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.bottom, 24)
+                        }
+                    }
                 }
-
             case .launching:
                 LaunchView(
                     title: "正在启动引擎…",
@@ -76,6 +131,15 @@ struct RootView: View {
                             .padding(.top, 8)
                     }
                 }
+                // 引擎跑起来之后仍能看到 iSH 的结论：进主界面了才想知道
+                // 「shell 工具到底能不能用」，这时翻回去看启动页不现实。
+                .overlay(alignment: .bottom) {
+                    if let ishReport, !ishReport.isFullyWorking {
+                        ISHReportCard(report: ishReport, compact: true)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 16)
+                    }
+                }
 
             case let .failed(message):
                 // 失败时重跑诊断：如果确实是缺产物，直接给出可执行指引。
@@ -97,8 +161,10 @@ struct RootView: View {
             }
         }
         .onAppear {
-            // 先诊断再启动：缺产物时不要让启动流程白跑一遍、
-            // 也不要让用户看到一句没法行动的失败提示。
+            // iSH 是可选路径（等价于安卓的 proot），失败也不拦引擎。
+            // 它自己会异步跑，回主线程时再刷新 readiness
+            // （诊断项里的「Linux 内核启动（实测）」要读 lastBootReport）。
+            startUserland()
             readiness = ReadinessChecker.check()
             if readiness?.canStart == true, case .idle = engine.state {
                 engine.ensureRunning()
@@ -262,5 +328,99 @@ struct ErrorBanner: View {
         .padding(10)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
         .padding(.horizontal, 12)
+    }
+}
+
+/// iSH 启动结果卡片。
+///
+/// # 为什么要把这些数字显示出来
+/// 《iSH集成验证.md》把「运行时执行命令」列为**唯一未实测**的一环。
+/// 在此之前 `ISHBridge.boot()` 定义了却从未被调用，所以那一环永远不会有输出。
+/// 现在把它接上，并把每一步的中间结果（解包条目数、boot 返回码、自检 stdout/stderr）
+/// 全部摊开 —— 真机上跑一次，屏幕上直接给答案，不需要连电脑看 Console.app。
+struct ISHReportCard: View {
+    let report: ISHBootReport
+    var compact = false
+
+    @State private var expanded = false
+
+    private var ok: Bool { report.isFullyWorking }
+    private var icon: String {
+        if ok { return "checkmark.seal.fill" }
+        return report.runtimeLinked ? "exclamationmark.triangle.fill" : "minus.circle.fill"
+    }
+    private var tint: Color {
+        if ok { return .green }
+        return report.runtimeLinked ? .orange : .secondary
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: icon).foregroundStyle(tint)
+                Text(ok ? "Linux 工作环境就绪" : "Linux 工作环境不可用")
+                    .font(.caption.weight(.semibold))
+                Spacer(minLength: 0)
+                Button(expanded ? "收起" : "详情") { expanded.toggle() }
+                    .font(.caption2)
+            }
+            Text(report.summary)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(expanded ? nil : 2)
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 3) {
+                    row("阶段", report.stage.label)
+                    row("已链接静态库", report.runtimeLinked ? "是" : "否")
+                    row("fakefs", report.fakefsReady
+                        ? "已铺好" + (report.extractedEntries > 0
+                            ? "（解包 \(report.extractedEntries) 条目，\(report.prepareMs)ms）"
+                            : "（复用已有）")
+                        : "未就绪")
+                    row("boot 返回码", "\(report.bootStatus)")
+                    if report.probeExitCode != 0 || !report.probeStdout.isEmpty {
+                        row("自检退出码", "\(report.probeExitCode)")
+                    }
+                    if !report.probeStdout.isEmpty {
+                        monoBlock("自检 stdout", report.probeStdout)
+                    }
+                    if !report.probeStderr.isEmpty {
+                        monoBlock("自检 stderr", String(report.probeStderr.prefix(400)))
+                    }
+                    if let reason = report.failureReason {
+                        monoBlock("失败原因", reason)
+                    }
+                    if !report.rootPath.isEmpty {
+                        row("fakefs 根", report.rootPath)
+                    }
+                }
+                .padding(.top, 2)
+            }
+        }
+        .padding(compact ? 10 : 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func row(_ k: String, _ v: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(k).font(.caption2).foregroundStyle(.secondary)
+            Spacer(minLength: 4)
+            Text(v).font(.caption2.monospaced()).multilineTextAlignment(.trailing)
+        }
+    }
+
+    private func monoBlock(_ title: String, _ body: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.caption2).foregroundStyle(.secondary)
+            Text(body)
+                .font(.caption2.monospaced())
+                .textSelection(.enabled)
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemBackground),
+                            in: RoundedRectangle(cornerRadius: 6))
+        }
     }
 }
