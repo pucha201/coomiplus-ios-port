@@ -15,10 +15,104 @@
 | PID1 supervisor | ✅ 实测 | `data/sbin/ishsv` 46,192 B，ELF64 EM_AARCH64 |
 | 用户态二进制 | ✅ 实测 | `busybox` 919,232 B，ELF64 EM_AARCH64 |
 | 解包算法 | ✅ 实测 | 856 文件 / 208 目录，与归档一致 |
-| **运行时执行命令** | ⚠ **未实测** | 需要真机，见最后一节 |
+| **启动入口已接线** | ✅ 已修 | 2026-11-13：`ISHBridge.boot()` **此前从未被调用**，见下方「重大修正」 |
+| **接线后的编译** | ✅ 实测 | run `43409322009` 全绿；新字符串在主二进制里命中，见「编译验证」 |
+| **运行时执行命令** | ⚠ **未实测** | 需要真机侧载，见最后一节 |
 
-**能确认的是：App 里确实有一个完整的内核 + 文件系统 + supervisor。**
+**能确认的是：App 里确实有一个完整的内核 + 文件系统 + supervisor，
+启动时会真的去 boot 它，且这份代码已编译进 IPA（35/35 断言通过）。**
 **不能确认的是：它在真机上 boot 起来之后 `sh -c 'echo ok'` 真的返回 ok。**
+
+这两句的区别很关键：**「编译通过 + 代码进包」不等于「运行时成功」。**
+本机是 Windows，没有 `swiftc`，也没有 iOS 模拟器 slice 能用的宿主 ——
+所以最后一环只能靠真机侧载，或者等 Apple Silicon Mac。
+
+---
+
+## 〇、重大修正（2026-11-13）：boot 从未被调用
+
+### 之前的状态
+
+`ISHBridge` 里的 `boot()` 和 `installUserlandIfNeeded()` 定义了，但**全仓没有任何一处调用它们**：
+
+```
+$ grep -rn '\.boot(' apps/ios/
+（零结果 —— 唯一的匹配是注释里提到自己的历史）
+```
+
+`EngineController.ensureRunning()` 只做三件事：建目录 → 同步 web 资源 → `coomi_start()`。
+**整条启动链路里没有一次触碰 `ISHBridge`。**
+
+后果：内核被静态链接进了二进制，但**永远不会启动**。而本文档此前写的验证步骤是
+「接上真机看 Console.app 里 `[iSH] userland 自检通过`」—— 这句话是错的：
+那句日志只存在于 `ISHBridge.boot()` 里，没人调用它就永远不会打印。
+**不是差一次运行，是差一根连线。**
+
+### 现在的状态
+
+新增 `ISHBridge.bootWithReport()` 作为**唯一**启动入口（旧的 `boot()` 已删除，
+避免两份实现并行漂移），并在 `RootView.onAppear` 里通过 `startUserland()` 接线：
+
+```
+RootView.onAppear
+  → startUserland()                    [后台串行队列，不阻塞主线程]
+      → ISHBridge.bootWithReport()
+          → prepareFakefs()            ① 先铺 fakefs（boot 之前必须）
+          → coomi_ish_boot()           ② 起内核
+          → runProbe()                 ③ /bin/sh -c "echo coomi-ok; uname -s"
+      → 回主线程写 @State ishReport
+  → ISHReportCard 显示结果              [界面上可见，不用连电脑]
+```
+
+另外修了三处相关缺陷：
+
+| # | 缺陷 | 后果 |
+|---|---|---|
+| 1 | `prepareFakefs()` 幂等检查只验 `meta.db` + `data/` | 首次解包残缺时，第二次启动误判「已就绪」，跳过硬断言 |
+| 2 | `Readiness` 查的是 `<root>/bin/sh` | 正确路径是 `<root>/data/bin/sh`（实测归档为 `fs/data/bin/sh`）。**原路径永远不存在**，铺好了也报「缺失」 |
+| 3 | `boot()` 幂等分支硬写 `probePassed = true` | 谎报通过 —— 自检失败时诊断界面会说「一切正常」 |
+
+### 编译验证已通过（2026-11-13，run 43409322009）
+
+本地是 Windows、没有 `swiftc`，所以**用公开仓 CI 当编译器**（Actions 对公开仓免费不限量）。
+改动推到公开仓 `b11561b` 后：
+
+| 证据 | 值 |
+|---|---|
+| run | `43409322009` — **5 个 job 全绿** |
+| `build CoomiIOS.app` | **75 秒 / 17 步**（真实 runner；额度耗尽时是 0 步 2 秒） |
+| 产物 | `CoomiIOS-unsigned` id `14029576986`，18,196,622 B |
+| 主二进制 | 30,307,984 B（旧 29,622,416 B，**+685,568 B**） |
+| 本地验证器 | 在**新产物**上复跑 → **35/35 通过** |
+
+**新代码确实进了包** —— 在主二进制里搜到只有本次改动才有的字符串：
+
+```
+「Linux 工作环境就绪」        1 处
+「Linux 工作环境不可用」       1 处
+「正在准备 Linux 工作环境」     1 处
+「boot 返回码」              1 处
+「iSH 诊断」                 1 处
+「Linux 内核启动（实测）」      1 处
+「fakefs 已铺好」             1 处
+```
+
+这些字符串此前不存在于任何版本，命中即可证明 `ISHReportCard` 与 `Readiness`
+的新分支都被编译进了产物。
+
+**它证明的是「编译通过 + 代码进包」，不等于「`ish_embed_boot` 运行时成功」。**
+后者仍需真机侧载，见下。
+
+### 现在的验证方式（不需要 Mac、不需要 Console.app）
+
+侧载后打开 App，**启动页底部会直接显示一张 iSH 诊断卡**：
+
+- 通过：绿勾「Linux 工作环境就绪」
+- 失败：橙/灰标 + 点「详情」可看到 **boot 返回码**、**自检 stdout/stderr**、**fakefs 路径**
+
+失败时按返回码对照本文档的错误码表定位（`-2` 挂载 / `-6` supervisor / `-12` 超时 / `-15` supervisor 报错）。
+
+**这一步跑完，本文档标题里那个「未实测」就能改成实测值。**
 
 ---
 
@@ -175,12 +269,17 @@ web/           95 文件
 boot 顺序也已修正：**先铺 fakefs，再 boot**（原来是先 boot 空目录，
 那必然挂在 `ISH_ERR_MOUNT`，而且空 fakefs 里没有 `/bin/tar`，是个死结）。
 
-boot 成功后还会自检一条 `/bin/sh -c 'echo coomi-ok; uname -s'`，
-失败会在 NSLog 里留下原因 —— 真机上跑一次就能确认。
+boot 成功后还会自检一条 `/bin/sh -c 'echo coomi-ok; uname -s'`。
 
-### 真机验证步骤
+### 真机验证步骤（2026-11-13 更新：不再需要 Console.app）
 
-1. 用自签工具给 IPA 签名（或用 Xcode 直接跑）
-2. 安装后看 Console.app 里 `[iSH]` 前缀的日志
-3. 预期看到 `fakefs 解包完成，856 个条目` 和 `userland 自检通过`
-4. 若失败，错误信息会指出具体是哪一步（`ISH_ERR_*` 有中文描述）
+1. 用自签工具给 IPA 签名并安装（AltStore / Sideloadly 均可，不需要 Mac）
+2. 打开 App，**启动页底部会直接显示 iSH 诊断卡**（无需连电脑）
+3. 通过时显示绿勾「Linux 工作环境就绪」；失败时点「详情」看：
+   - **boot 返回码**（对照上表定位）
+   - **自检 stdout / stderr**（`coomi-ok` 与 `uname -s` 的真实输出）
+   - **fakefs 根路径**、解包条目数、耗时
+4. 引擎启动后进入主界面，若 iSH 未就绪，底部仍会保留一张精简诊断卡
+
+日志（`[iSH]` 前缀）依然会打进 Console.app，但**不再是唯一渠道** ——
+这条改动本身就是为了让「没有 Mac 也能验证」成立。
