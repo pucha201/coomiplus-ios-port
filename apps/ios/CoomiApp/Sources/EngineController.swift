@@ -20,8 +20,14 @@ import Security
 /// 而 iSH 本是 proot 的替代品（只提供 shell 工具），不该承担跑引擎的职责。
 ///
 /// # 与 iSH 的关系
-/// **完全解耦**：引擎先起（原生，秒级），iSH 后起（可选）。
-/// iSH 起不来时引擎照常工作，只是 AI 不能执行 shell 命令。
+/// **启动上解耦**：引擎先起（原生，秒级），iSH 后起（可选）。
+/// iSH 起不来时引擎照常工作（对话/记忆/联网全正常）。
+///
+/// ⚠ 但「解耦」不等于「已接通」（2026-11-13 全面检查发现）：
+/// 引擎侧目前**没有**执行 shell 的出口 —— 本文件的启动流程只调
+/// `coomi_start`，从不触碰 `ISHBridge`；Rust 侧也零引用 `coomi_ish_run`。
+/// 所以「AI 能执行 shell 命令」这一项在 iOS 上**尚不可用**，
+/// 而不是「iSH 起不来时才不可用」。详见 `docs/全面检查报告-2026-11-13.md`。
 @MainActor
 final class EngineController: ObservableObject {
 
